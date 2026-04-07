@@ -1,0 +1,30 @@
+# Секреты и конфиги окружения
+infra/.env
+infra/ssl/
+
+# Зависимости
+node_modules/
+*/node_modules/
+
+# Сборки
+dist/
+*/dist/
+build/
+*/build/
+
+# Логи
+*.log
+logs/
+
+# Временные файлы редакторов
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Кэш TypeScript
+*.tsbuildinfo
+
+# Кэш Vite
+.vite/
+miniapp/.vite/

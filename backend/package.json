@@ -1,0 +1,25 @@
+{
+  "name": "max-comments-backend",
+  "version": "1.0.0",
+  "description": "MAX Comments Platform — Backend REST API",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "NODE_ENV=development tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/backend/src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "pg": "^8.11.3",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.0",
+    "@types/pg": "^8.10.9",
+    "@types/uuid": "^9.0.7",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
