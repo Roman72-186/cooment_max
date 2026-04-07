@@ -21,6 +21,7 @@ app.post('/webhook', async (req, res) => {
 
   const update = req.body as WebhookUpdate;
 
+  logger.info('Получен webhook RAW', { body: JSON.stringify(req.body).slice(0, 500) });
   logger.debug('Получен webhook', { updateType: update.update_type, updateId: update.update_id });
 
   try {

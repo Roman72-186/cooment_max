@@ -88,15 +88,13 @@ export async function sendMessage(
 }
 
 // Редактировать сообщение (прикрепить кнопку комментариев / обновить счётчик)
+// message_id передаётся как query-параметр согласно документации MAX API
 export async function editMessage(
   messageId: string,
   updates: { text?: string; attachments?: unknown[] }
 ): Promise<void> {
   return withRetry(() =>
-    request('PUT', '/messages', {
-      message_id: messageId,
-      ...updates,
-    })
+    request('PUT', `/messages?message_id=${encodeURIComponent(messageId)}`, updates)
   );
 }
 
@@ -122,6 +120,16 @@ export async function addChatMember(chatId: string, userId: number): Promise<voi
   await request('POST', `/chats/${chatId}/members`, { user_id: userId });
 }
 
+// Назначить пользователя администратором группчата
+export async function addChatAdmin(chatId: string, userId: number): Promise<void> {
+  await request('POST', `/chats/${chatId}/members/admins`, {
+    admins: [{
+      user_id: userId,
+      permissions: ['read_all_messages', 'add_remove_members', 'change_chat_info', 'pin_message', 'write'],
+    }],
+  });
+}
+
 // ─── CALLBACK ОТВЕТЫ ─────────────────────────────────────────────
 
 // Ответить на нажатие кнопки (подтвердить получение)
@@ -143,7 +151,8 @@ export function buildCommentsButton(postId: number, count: number): unknown {
       buttons: [[{
         type: 'open_app',
         text: label,
-        url: `${config.miniAppUrl}?startapp=post_${postId}`,
+        web_app: config.miniAppUrl,      // URL мини-приложения
+        payload: `post_${postId}`,        // стартовый параметр (max 512 символов)
       }]],
     },
   };

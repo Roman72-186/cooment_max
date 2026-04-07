@@ -33,15 +33,18 @@ The full specification lives in `MAX_Comments_Build_Instructions_v2.md`. **Read 
 
 ### Services
 
-| Service | Container | Port | Purpose |
-|---------|-----------|------|---------|
-| Bot | `mc_bot` | 3000 | MAX webhook receiver + background jobs |
-| Backend API | `mc_backend` | 3001 | REST API for Mini App |
-| PostgreSQL | `mc_postgres` | 5432 | Primary data store |
-| Redis | `mc_redis` | 6379 | Cache + job queue |
-| Nginx | `mc_nginx` | configurable | SSL termination + routing |
+| Service | Where | Port | Purpose |
+|---------|-------|------|---------|
+| Bot | `mc_bot` (VPS) | 3000 | MAX webhook receiver + background jobs |
+| Backend API | `mc_backend` (VPS) | 3001 | REST API for Mini App |
+| PostgreSQL | Supabase (managed) | 6543 | Primary data store — connection pooler |
+| Redis | `mc_redis` (VPS) | 6379 | Cache + job queue |
+| Nginx | `mc_nginx` (VPS) | configurable | SSL termination + routing |
+| Mini App | Vercel | — | React UI, auto-deploy from GitHub |
 
-All containers share `max-comments-net` network. All container/volume names are prefixed `mc_` to avoid conflicts with other services on the VPS.
+VPS containers share `max-comments-net` bridge network. All container/volume names are prefixed `mc_` to avoid conflicts with other services on the VPS.
+
+**Supabase connection:** use the **transaction pooler** URL (`port 6543`) — the direct host (`db.xxx.supabase.co`) resolves to IPv6 only, which causes `ENETUNREACH` inside Docker containers.
 
 ### Directory Layout
 
@@ -96,7 +99,10 @@ docker-compose down
 ### Database
 
 ```bash
-docker exec -it mc_postgres psql -U mcuser maxcomments
+# Supabase — управляется через dashboard (supabase.com) или psql:
+psql "postgresql://postgres.lfsqjmsjldisqycyvdnw:<PASSWORD>@aws-1-eu-north-1.pooler.supabase.com:6543/postgres"
+
+# Redis
 docker exec -it mc_redis redis-cli -a <REDIS_PASSWORD>
 ```
 
@@ -137,7 +143,9 @@ Indexes on: `comments.post_id`, `posts.channel_id`, `analytics_daily.(channel_id
 
 All secrets live in `infra/.env` (never commit). Template is `infra/.env.example`.
 
-Key variables: `MAX_BOT_TOKEN`, `WEBHOOK_URL`, `DB_PASSWORD`, `REDIS_PASSWORD`, `MINI_APP_URL`, `NGINX_HTTP_PORT`, `NGINX_HTTPS_PORT`, `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET`
+Key variables: `MAX_BOT_TOKEN`, `WEBHOOK_URL`, `DATABASE_URL`, `REDIS_URL`, `REDIS_PASSWORD`, `MINI_APP_URL`, `NGINX_HTTP_PORT`, `NGINX_HTTPS_PORT`, `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET`
+
+`DATABASE_URL` must point to the **Supabase transaction pooler** (port 6543). The direct connection host is IPv6-only and unreachable from Docker bridge networks.
 
 Nginx uses custom ports (not 80/443) to avoid conflicts with other VPS services — confirm exact ports with owner before configuring.
 
