@@ -14,6 +14,11 @@ interface Props {
 export function CommentsPage({ postId }: Props) {
   const { comments, loading, error, setComments, setLoading, setError } = useAppStore();
 
+  // Удалить комментарий из локального стейта (без перезагрузки)
+  const handleDeleted = useCallback((id: number) => {
+    setComments(comments.filter((c) => c.id !== id));
+  }, [comments, setComments]);
+
   const loadComments = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -59,7 +64,7 @@ export function CommentsPage({ postId }: Props) {
             <button onClick={loadComments}>Повторить</button>
           </div>
         ) : (
-          <CommentThread comments={comments} />
+          <CommentThread comments={comments} onDeleted={handleDeleted} />
         )}
       </main>
 

@@ -1,6 +1,6 @@
 // GET /api/comments?post_id=X  — список комментариев
 // POST /api/comments             — добавить комментарий
-// DELETE /api/comments/:id       — скрыть комментарий (модерация)
+// DELETE /api/comments/:id       — скрыть (автор ИЛИ владелец канала)
 import { Router } from 'express';
 import { pool } from '../db/db.js';
 import { requireAuth, optionalAuth } from '../middleware/auth.js';
@@ -16,22 +16,41 @@ commentsRouter.get('/', optionalAuth, async (req, res) => {
   }
 
   try {
+    // DB ID текущего пользователя для liked_by_me (0 если не авторизован)
+    let currentUserDbId = 0;
+    if (req.maxUser?.user_id) {
+      const u = await pool.query(
+        'SELECT id FROM users WHERE max_user_id = $1',
+        [req.maxUser.user_id]
+      );
+      currentUserDbId = u.rows[0]?.id ?? 0;
+    }
+
     const { rows } = await pool.query(
       `SELECT
          c.id,
          c.post_id,
          c.author_id,
-         u.name AS author_name,
-         u.username AS author_username,
+         u.name              AS author_name,
+         u.username          AS author_username,
+         u.max_user_id       AS author_max_id,
          c.parent_id,
          c.text,
          c.is_hidden,
-         c.created_at
+         c.created_at,
+         COALESCE(owner_u.max_user_id, 0)          AS channel_owner_max_id,
+         COUNT(r.comment_id)::int                   AS likes_count,
+         COALESCE(BOOL_OR(r.user_id = $2), false)   AS liked_by_me
        FROM comments c
-       LEFT JOIN users u ON u.id = c.author_id
+       LEFT JOIN users u          ON u.id = c.author_id
+       LEFT JOIN posts p          ON p.id = c.post_id
+       LEFT JOIN channels ch      ON ch.id = p.channel_id
+       LEFT JOIN users owner_u    ON owner_u.id = ch.owner_id
+       LEFT JOIN comment_reactions r ON r.comment_id = c.id
        WHERE c.post_id = $1 AND c.is_hidden = false
+       GROUP BY c.id, u.name, u.username, u.max_user_id, owner_u.max_user_id
        ORDER BY c.created_at ASC`,
-      [postId]
+      [postId, currentUserDbId]
     );
     res.json(rows);
   } catch (err) {
@@ -60,7 +79,7 @@ commentsRouter.post('/', requireAuth, async (req, res) => {
   }
 
   try {
-    // Upsert пользователя (создать если не существует)
+    // Upsert пользователя
     const userResult = await pool.query(
       `INSERT INTO users (max_user_id, name, username)
        VALUES ($1, $2, $3)
@@ -72,26 +91,25 @@ commentsRouter.post('/', requireAuth, async (req, res) => {
     );
     const authorId = userResult.rows[0].id;
 
-    // Создать комментарий
     const { rows } = await pool.query(
       `INSERT INTO comments (post_id, author_id, parent_id, text)
        VALUES ($1, $2, $3, $4)
-       RETURNING
-         id, post_id, author_id, parent_id, text, is_hidden, created_at`,
+       RETURNING id, post_id, author_id, parent_id, text, is_hidden, created_at`,
       [post_id, authorId, parent_id ?? null, text.trim()]
     );
 
-    // Обновить счётчик комментариев у поста
     await pool.query(
-      `UPDATE posts SET comment_count = comment_count + 1 WHERE id = $1`,
+      'UPDATE posts SET comment_count = comment_count + 1 WHERE id = $1',
       [post_id]
     );
 
-    // Вернуть комментарий с именем автора
     res.status(201).json({
       ...rows[0],
       author_name: maxUser.name,
       author_username: maxUser.username,
+      author_max_id: maxUser.user_id,
+      likes_count: 0,
+      liked_by_me: false,
     });
   } catch (err) {
     console.error('POST /api/comments error:', err);
@@ -99,17 +117,23 @@ commentsRouter.post('/', requireAuth, async (req, res) => {
   }
 });
 
-// DELETE /api/comments/:id
+// DELETE /api/comments/:id — автор ИЛИ владелец канала
 commentsRouter.delete('/:id', requireAuth, async (req, res) => {
   const commentId = parseInt(req.params.id, 10);
   const maxUser = req.maxUser!;
 
   try {
-    // Найти автора комментария
+    // Получаем автора и владельца канала одним запросом
     const { rows } = await pool.query(
-      `SELECT c.id, u.max_user_id
+      `SELECT
+         c.id,
+         author_u.max_user_id  AS author_max_id,
+         owner_u.max_user_id   AS channel_owner_max_id
        FROM comments c
-       JOIN users u ON u.id = c.author_id
+       JOIN users author_u  ON author_u.id = c.author_id
+       JOIN posts p         ON p.id = c.post_id
+       JOIN channels ch     ON ch.id = p.channel_id
+       JOIN users owner_u   ON owner_u.id = ch.owner_id
        WHERE c.id = $1`,
       [commentId]
     );
@@ -119,14 +143,16 @@ commentsRouter.delete('/:id', requireAuth, async (req, res) => {
       return;
     }
 
-    // Разрешить только автору (или можно расширить на владельца канала)
-    if (rows[0].max_user_id !== maxUser.user_id) {
+    const isAuthor = rows[0].author_max_id === maxUser.user_id;
+    const isOwner  = rows[0].channel_owner_max_id === maxUser.user_id;
+
+    if (!isAuthor && !isOwner) {
       res.status(403).json({ error: 'Нет прав' });
       return;
     }
 
     await pool.query(
-      `UPDATE comments SET is_hidden = true WHERE id = $1`,
+      'UPDATE comments SET is_hidden = true WHERE id = $1',
       [commentId]
     );
 

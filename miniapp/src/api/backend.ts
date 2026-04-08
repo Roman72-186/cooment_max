@@ -25,10 +25,14 @@ export interface Comment {
   author_id: number;
   author_name: string;
   author_username?: string;
+  author_max_id?: number;         // MAX user ID автора (для проверки прав удаления)
+  channel_owner_max_id?: number;  // MAX user ID владельца канала
   parent_id: number | null;
   text: string;
   is_hidden: boolean;
   created_at: string;
+  likes_count?: number;           // количество ❤️
+  liked_by_me?: boolean;          // текущий пользователь поставил ❤️
   replies?: Comment[];
 }
 
@@ -64,6 +68,13 @@ export async function postComment(
 
 export async function deleteComment(commentId: number): Promise<void> {
   await api.delete(`/api/comments/${commentId}`);
+}
+
+export async function toggleReaction(
+  commentId: number
+): Promise<{ liked: boolean; likes_count: number }> {
+  const { data } = await api.post(`/api/reactions/${commentId}`);
+  return data;
 }
 
 // ─── ПОСТ ────────────────────────────────────────────────────────

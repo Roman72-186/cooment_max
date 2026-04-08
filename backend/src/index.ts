@@ -2,6 +2,7 @@
 import express from 'express';
 import { commentsRouter } from './routes/comments.js';
 import { postsRouter } from './routes/posts.js';
+import { reactionsRouter } from './routes/reactions.js';
 
 const app = express();
 app.use(express.json());
@@ -26,6 +27,7 @@ app.get('/health', (_req, res) => {
 // API маршруты
 app.use('/api/comments', commentsRouter);
 app.use('/api/posts', postsRouter);
+app.use('/api/reactions', reactionsRouter);
 
 // 404 для неизвестных маршрутов
 app.use((_req, res) => {

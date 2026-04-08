@@ -165,19 +165,64 @@ body {
   white-space: pre-wrap;
 }
 
+/* Блок действий под комментарием */
+.comment-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+
 .comment-reply-btn {
   background: none;
   border: none;
   color: var(--accent);
   font-size: 12px;
   cursor: pointer;
-  padding: 4px 0;
-  margin-top: 4px;
+  padding: 2px 0;
 }
 
-.comment-reply-btn:hover {
-  color: var(--accent-hover);
+.comment-reply-btn:hover { color: var(--accent-hover); }
+
+/* Кнопка реакции ❤️ */
+.reaction-btn {
+  background: none;
+  border: none;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 12px;
+  color: var(--text-secondary);
+  transition: background 0.15s;
 }
+
+.reaction-btn:hover { background: rgba(255,255,255,0.07); }
+.reaction-btn--active { color: #ff4d6d; }
+.reaction-btn:disabled { opacity: 0.6; cursor: default; }
+
+.reaction-count {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Кнопка удаления — прижата к правому краю header */
+.comment-delete-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.comment-delete-btn:hover { color: var(--error); background: rgba(239,83,80,0.1); }
+.comment-delete-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* ─── ПУСТОЕ СОСТОЯНИЕ ──────────────────────────────────────── */
 
