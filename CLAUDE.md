@@ -37,14 +37,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 |---------|-----------|------|---------|
 | Bot | `mc_bot` | 3000 | MAX webhook receiver + background jobs |
 | Backend API | `mc_backend` | 3001 | REST API для Mini App |
-| PostgreSQL | Supabase (managed) | 6543 | Основное хранилище — transaction pooler |
+| PostgreSQL | `mc_postgres` | 5432 | Локальная БД внутри Docker |
 | Redis | `mc_redis` | 6379 | Cache + job queue |
-| Nginx | `mc_nginx` | custom | SSL termination + routing |
-| Mini App | Vercel | — | React UI, auto-deploy из GitHub |
+| Nginx | `mc_nginx` | custom | SSL termination + routing + раздача Mini App |
 
+**Всё на одном VPS** `sushi-house-39.online` (89.169.2.231). Никакого Vercel, никакого Supabase.
+Mini App собирается внутри `infra/Dockerfile.nginx` (multi-stage: node build → nginx static) и раздаётся nginx из `/var/www/miniapp`.
 VPS-контейнеры объединены в bridge-сеть `max-comments-net`. Все контейнеры/volumes с префиксом `mc_`.
-
-**Supabase**: всегда использовать **transaction pooler** (port 6543) — прямой хост `db.xxx.supabase.co` резолвится только в IPv6, что вызывает `ENETUNREACH` внутри Docker bridge-сети.
 
 ---
 
@@ -101,8 +100,8 @@ docker-compose down                             # остановить (данн
 ### Database
 
 ```bash
-# Supabase
-psql "postgresql://postgres.lfsqjmsjldisqycyvdnw:<PASSWORD>@aws-1-eu-north-1.pooler.supabase.com:6543/postgres"
+# Локальный PostgreSQL внутри Docker
+docker exec -it mc_postgres psql -U mcuser -d maxcomments
 
 # Redis
 docker exec -it mc_redis redis-cli -a <REDIS_PASSWORD>
@@ -110,8 +109,13 @@ docker exec -it mc_redis redis-cli -a <REDIS_PASSWORD>
 
 ### Deploy
 
+Сервер НЕ имеет git-репозитория. Деплой только через SFTP (paramiko):
+1. Загрузить изменённые файлы через `sftp.open(remote_path, 'w').write(content)`
+2. Пересобрать нужный контейнер: `docker compose up -d --build mc_bot` (или mc_backend, mc_nginx)
+
+Mini App (изменения в `miniapp/`) — пересобирать `mc_nginx`:
 ```bash
-cd infra && ./deploy.sh   # git pull + build + up -d
+docker compose up -d --build mc_nginx   # занимает ~3 мин (npm ci + build внутри Docker)
 ```
 
 ---
@@ -125,7 +129,8 @@ cd infra && ./deploy.sh   # git pull + build + up -d
 - **Приватные каналы**: максимум 1000 участников
 - Mini App ОБЯЗАТЕЛЬНО загружает `bridge.js` из `https://static.max.ru/static/js/bridge.js` **первым** в `index.html` — до всех остальных скриптов
 - MAX Bridge auth: HMAC-SHA256 валидация `initData` — проверять при каждом запросе в `backend/src/middleware/auth.ts`
-- Нет тестового фреймворка — тестирование через Python-скрипты в корне (check_bot.py и др.) и ручные проверки
+- Тестовый фреймворк: **Vitest** (в `bot/`). Запуск: `cd bot && npm test`. Тесты в `bot/src/handlers/__tests__/`
+- **Нет Vercel** — Mini App на том же VPS, раздаётся nginx из `/var/www/miniapp` (собирается в Dockerfile.nginx)
 
 ---
 
@@ -135,7 +140,7 @@ cd infra && ./deploy.sh   # git pull + build + up -d
 
 | Файл | Событие MAX | Что делает |
 |------|-------------|------------|
-| `onBotAdded.ts` | bot added to channel | регистрирует канал, создаёт discussion chat |
+| `onBotAdded.ts` | bot added to channel | регистрирует канал (определяет owner через getChatAdmins) |
 | `onBotRemoved.ts` | bot removed | деактивирует канал |
 | `onBotStarted.ts` | user starts bot | upsert user |
 | `onPostCreated.ts` | channel post published | репост + прикрепляет кнопку Comments |
@@ -197,7 +202,7 @@ GET  /health
 | `WEBHOOK_URL` | HTTPS URL для webhook |
 | `DATABASE_URL` | Supabase transaction pooler (port 6543) |
 | `REDIS_URL` / `REDIS_PASSWORD` | Redis |
-| `MINI_APP_URL` | URL задеплоенного Mini App (Vercel) |
+| `MINI_APP_URL` | URL Mini App на VPS (https://sushi-house-39.online) |
 | `NGINX_HTTP_PORT` / `NGINX_HTTPS_PORT` | Нестандартные порты (не 80/443) |
 | `YOOKASSA_SHOP_ID` / `YOOKASSA_SECRET` | Платёжная система |
 
