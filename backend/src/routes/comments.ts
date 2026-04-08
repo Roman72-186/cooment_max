@@ -52,7 +52,15 @@ commentsRouter.get('/', optionalAuth, async (req, res) => {
        ORDER BY c.created_at ASC`,
       [postId, currentUserDbId]
     );
-    res.json(rows);
+
+    // pg возвращает BIGINT как строку — приводим к числу,
+    // чтобы фронтенд мог корректно сравнивать с id из MAX Bridge
+    const normalized = rows.map((row) => ({
+      ...row,
+      author_max_id: Number(row.author_max_id),
+      channel_owner_max_id: Number(row.channel_owner_max_id),
+    }));
+    res.json(normalized);
   } catch (err) {
     console.error('GET /api/comments error:', err);
     res.status(500).json({ error: 'Ошибка сервера' });
@@ -145,8 +153,9 @@ commentsRouter.delete('/:id', requireAuth, async (req, res) => {
       return;
     }
 
-    const isAuthor = rows[0].author_max_id === maxUser.user_id;
-    const isOwner  = rows[0].channel_owner_max_id === maxUser.user_id;
+    // pg возвращает BIGINT как строку — Number() приводит к числу перед сравнением
+    const isAuthor = Number(rows[0].author_max_id) === maxUser.user_id;
+    const isOwner  = Number(rows[0].channel_owner_max_id) === maxUser.user_id;
 
     if (!isAuthor && !isOwner) {
       res.status(403).json({ error: 'Нет прав' });
