@@ -7,7 +7,7 @@ export default defineConfig({
     proxy: {
       // В dev-режиме проксируем запросы к бэкенду
       '/api': {
-        target: 'https://89.169.2.231',
+        target: 'https://sushi-house-39.online',
         changeOrigin: true,
         secure: false,
       },
