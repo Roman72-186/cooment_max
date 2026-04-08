@@ -57,9 +57,11 @@ services:
     depends_on: [mc_postgres, mc_redis]
     env_file: .env
 
-  # 5. Nginx — обратный прокси, SSL терминация
+  # 5. Nginx — раздаёт Mini App + обратный прокси для API/webhook
   mc_nginx:
-    image: nginx:alpine
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.nginx
     container_name: mc_nginx
     restart: unless-stopped
     networks: [max-comments-net]

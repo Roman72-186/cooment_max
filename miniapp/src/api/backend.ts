@@ -2,9 +2,9 @@
 import axios from 'axios';
 import { getInitData } from '../bridge/maxBridge';
 
-// baseURL — прямой адрес бэкенда (CORS разрешён, прокси не нужен)
+// baseURL пустой — Mini App и API на одном домене (sushi-house-39.online)
 const api = axios.create({
-  baseURL: 'https://sushi-house-39.online',
+  baseURL: '',
   timeout: 10000,
 });
 

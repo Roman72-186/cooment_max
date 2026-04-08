@@ -1,0 +1,12 @@
+# Stage 1: Сборка Mini App
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY miniapp/package*.json ./
+RUN npm ci --quiet
+COPY miniapp/ ./
+RUN npm run build
+
+# Stage 2: Nginx с собранными статическими файлами
+FROM nginx:alpine
+COPY --from=builder /app/dist /var/www/miniapp
+# nginx.conf и ssl монтируются через docker-compose
