@@ -1,7 +1,7 @@
 // Хендлер: бот добавлен в канал
 // Регистрирует канал в БД и создаёт скрытый групповой чат для хранения комментариев
 
-import * as maxClient from '../api/maxClient.js';
+import { getChatInfo, createChat, sendMessageToUser } from '../api/maxClient.js';
 import * as db from '../db/db.js';
 import { logger } from '../utils/logger.js';
 import type { WebhookUpdate } from '../../../shared/types.js';
@@ -23,7 +23,7 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
 
   try {
     // Получаем информацию о канале из MAX API
-    const chatInfo = await maxClient.getChatInfo(chatId) as {
+    const chatInfo = await getChatInfo(chatId) as {
       chat_id: string;
       title: string;
       type: string;
@@ -39,7 +39,7 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
 
     // Создаём скрытый групповой чат для хранения комментариев
     const discussionTitle = `[MC] ${chatInfo.title ?? chatId}`;
-    const discussionChat = await maxClient.createChat(discussionTitle);
+    const discussionChat = await createChat(discussionTitle);
     logger.info('Скрытый групчат создан', { discussionChatId: discussionChat.chat_id });
 
     // Регистрируем канал в БД
@@ -50,10 +50,10 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
       discussion_chat_id: discussionChat.chat_id,
     });
 
-    // Отправляем подтверждение владельцу в личку
-    await maxClient.sendMessage(
-      String(sender.user_id),
-      `✅ Канал успешно подключён!\n\nТеперь каждый новый пост будет получать кнопку «💬 Комментарии».\n\nОткройте Mini App для управления каналом.`
+    // Отправляем подтверждение владельцу в личку (user_id query param)
+    await sendMessageToUser(
+      sender.user_id,
+      `✅ Канал **${chatInfo.title ?? chatId}** подключён!\n\nКаждый новый пост будет получать кнопку «💬 Комментарии».\n\nОткройте панель управления для настройки.`
     );
 
     logger.info('Канал зарегистрирован', { chatId, ownerId: owner.id });
