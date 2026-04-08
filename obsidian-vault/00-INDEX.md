@@ -17,6 +17,7 @@
 | [[04-Business/Monetization]] | Монетизация: ЮКасса, рефералки, апгрейды |
 | [[04-Business/Competitor-Analysis]] | Сравнение с Tapbox.ru |
 | [[05-DevLog/2026-04-07-kickoff]] | Старт проекта |
+| [[05-DevLog/2026-04-08-progress]] | Шаги 12–15: бот, Mini App, backend |
 | [[06-Decisions/ADR-001-tech-stack]] | ADR-001: Выбор технологического стека |
 
 ## Быстрые ссылки
