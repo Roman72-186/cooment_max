@@ -26,9 +26,21 @@ app.post('/webhook', async (req, res) => {
 
   try {
     switch (update.update_type) {
-      case 'message_created':
-        await onPostCreated(update);
+      case 'message_created': {
+        const chatType = update.message?.recipient?.chat_type;
+        if (chatType === 'dialog') {
+          // Сообщение в диалоге с ботом — проверяем команды
+          const text = (update.message?.body as { text?: string })?.text ?? '';
+          if (text.startsWith('/start')) {
+            await onBotStarted(update);
+          }
+          // другие команды /help, /settings и т.д. можно добавить здесь
+        } else {
+          // Пост в канале
+          await onPostCreated(update);
+        }
         break;
+      }
       case 'bot_added':
         await onBotAdded(update);
         break;

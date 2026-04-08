@@ -14,8 +14,12 @@ export async function onBotStarted(update: WebhookUpdate): Promise<void> {
   const sender = message.sender;
   const chatId = message.recipient.chat_id;
 
-  // Реферальный код из deep link: https://max.ru/<botName>?start=ref_<CODE>
-  const startParam = (message.body as { payload?: string }).payload ?? '';
+  // startParam приходит двумя путями:
+  //   bot_started → message.body.payload = "ref_XXX"
+  //   message_created → message.body.text = "/start ref_XXX"
+  const bodyPayload = (message.body as { payload?: string }).payload ?? '';
+  const bodyText    = (message.body as { text?: string }).text ?? '';
+  const startParam  = bodyPayload || bodyText.replace(/^\/start\s*/i, '').trim();
   const refMatch = startParam.match(/^ref_([A-Z0-9]+)$/i);
 
   logger.info('Бот запущен пользователем', { userId: sender.user_id, startParam });
