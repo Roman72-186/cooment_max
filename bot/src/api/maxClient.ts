@@ -72,18 +72,33 @@ export async function getUpdates(marker?: number): Promise<{ updates: WebhookUpd
 
 // ─── СООБЩЕНИЯ ───────────────────────────────────────────────────
 
-// Отправить сообщение в чат (используется для репоста в скрытый группчат)
+// Отправить сообщение в чат/канал (chat_id — query param согласно MAX API)
 export async function sendMessage(
   chatId: string,
   text: string,
   attachments?: unknown[]
 ): Promise<MaxSendMessageResult> {
   return withRetry(() =>
-    request<MaxSendMessageResult>('POST', '/messages', {
-      recipient: { chat_id: chatId },
-      text,
-      ...(attachments?.length ? { attachments } : {}),
-    })
+    request<MaxSendMessageResult>(
+      'POST',
+      `/messages?chat_id=${encodeURIComponent(chatId)}`,
+      { text, format: 'markdown', ...(attachments?.length ? { attachments } : {}) }
+    )
+  );
+}
+
+// Отправить сообщение пользователю напрямую (user_id — query param согласно MAX API)
+export async function sendMessageToUser(
+  userId: number,
+  text: string,
+  attachments?: unknown[]
+): Promise<MaxSendMessageResult> {
+  return withRetry(() =>
+    request<MaxSendMessageResult>(
+      'POST',
+      `/messages?user_id=${userId}`,
+      { text, format: 'markdown', ...(attachments?.length ? { attachments } : {}) }
+    )
   );
 }
 

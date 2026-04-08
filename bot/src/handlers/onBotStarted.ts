@@ -1,50 +1,59 @@
 // Хендлер: пользователь открыл бота напрямую (команда /start)
 // Отправляет красивое приветствие с описанием и кнопкой открытия Mini App
 
-import * as maxClient from '../api/maxClient.js';
+import { sendMessageToUser } from '../api/maxClient.js';
 import * as db from '../db/db.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../utils/config.js';
 import type { WebhookUpdate } from '../../../shared/types.js';
 
 export async function onBotStarted(update: WebhookUpdate): Promise<void> {
-  const message = update.message;
-  if (!message) return;
+  // bot_started и message_created имеют разную структуру:
+  //   bot_started     → update.user, update.user_id (нет update.message)
+  //   message_created → update.message.sender, update.message.body.text = "/start"
+  const raw = update as unknown as Record<string, unknown>;
 
-  const sender = message.sender;
-  const chatId = message.recipient.chat_id;
+  let userId: number;
+  let userName: string;
+  let startParam: string;
 
-  // startParam приходит двумя путями:
-  //   bot_started → message.body.payload = "ref_XXX"
-  //   message_created → message.body.text = "/start ref_XXX"
-  const bodyPayload = (message.body as { payload?: string }).payload ?? '';
-  const bodyText    = (message.body as { text?: string }).text ?? '';
-  const startParam  = bodyPayload || bodyText.replace(/^\/start\s*/i, '').trim();
+  if (update.message) {
+    // Пришло через message_created (/start в диалоге)
+    const sender = update.message.sender;
+    userId    = sender.user_id;
+    userName  = sender.name ?? String(sender.user_id);
+    const bodyText = (update.message.body as { text?: string }).text ?? '';
+    startParam = bodyText.replace(/^\/start\s*/i, '').trim();
+  } else {
+    // Пришло через bot_started
+    const u = (raw['user'] ?? {}) as { user_id?: number; name?: string };
+    userId    = (raw['user_id'] as number) ?? u.user_id ?? 0;
+    userName  = u.name ?? String(userId);
+    startParam = (raw['payload'] as string) ?? '';
+  }
+
+  if (!userId) return;
+
   const refMatch = startParam.match(/^ref_([A-Z0-9]+)$/i);
-
-  logger.info('Бот запущен пользователем', { userId: sender.user_id, startParam });
+  logger.info('Бот запущен пользователем', { userId, startParam });
 
   try {
-    // Регистрируем или обновляем пользователя
     const user = await db.upsertUser({
-      max_user_id: sender.user_id,
-      name: sender.name,
-      username: sender.username,
+      max_user_id: userId,
+      name: userName,
+      username: undefined,
     });
 
-    // Если пришёл с реферальной ссылкой — связываем
     if (refMatch && !user.referred_by) {
       await linkReferral(user.id, refMatch[1]);
     }
 
-    // Отправляем красивое приветствие с кнопкой
-    const text = buildWelcomeText(sender.name ?? 'друг');
+    const text   = buildWelcomeText(userName);
     const button = buildOpenAppButton();
-
-    await maxClient.sendMessage(String(chatId), text, [button]);
+    await sendMessageToUser(userId, text, [button]);
 
   } catch (err) {
-    logger.error('Ошибка в onBotStarted', { userId: sender.user_id, err });
+    logger.error('Ошибка в onBotStarted', { userId, err });
   }
 }
 
