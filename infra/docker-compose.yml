@@ -45,6 +45,9 @@ services:
     networks: [max-comments-net]
     depends_on: [mc_postgres, mc_redis]
     env_file: .env
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
   # 4. Backend — REST API для Mini App
   mc_backend:
@@ -56,6 +59,9 @@ services:
     networks: [max-comments-net]
     depends_on: [mc_postgres, mc_redis]
     env_file: .env
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
 
   # 5. Nginx — раздаёт Mini App + обратный прокси для API/webhook
   mc_nginx:

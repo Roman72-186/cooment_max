@@ -58,7 +58,7 @@ describe('onBotAdded', () => {
       ],
     });
     vi.mocked(maxClient.createChat).mockResolvedValue({ chat_id: 'disc_456' });
-    vi.mocked(maxClient.sendMessageToUser).mockResolvedValue(undefined);
+    vi.mocked(maxClient.sendMessageToUser).mockResolvedValue(undefined as any);
     vi.mocked(db.upsertUser).mockResolvedValue({ id: 1, max_user_id: 200, name: 'Bob' } as any);
     vi.mocked(db.upsertChannel).mockResolvedValue({ id: 1 } as any);
     vi.mocked(db.getChannelByMaxChatId).mockResolvedValue(null); // новый канал по умолчанию

@@ -71,15 +71,21 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
     const existingChannel = await db.getChannelByMaxChatId(chatId);
 
     if (existingChannel) {
-      // Реактивация: просто снимаем is_active = false, групчат уже есть
+      // Реактивация: снимаем is_active = false
+      // Если discussion_chat_id пустой (например, первый раз создание упало) — создаём сейчас
+      let discussionChatId = existingChannel.discussion_chat_id;
+      if (!discussionChatId) {
+        const discussionTitle = `[MC] ${chatInfo.title ?? chatId}`;
+        const discussionChat = await createChat(discussionTitle);
+        discussionChatId = discussionChat.chat_id;
+        logger.info('Скрытый групчат создан при реактивации', { discussionChatId });
+      }
+
       await pool.query(
-        'UPDATE channels SET is_active = true, channel_name = $1 WHERE max_chat_id = $2',
-        [chatInfo.title ?? null, chatId]
+        'UPDATE channels SET is_active = true, channel_name = $1, discussion_chat_id = COALESCE($2, discussion_chat_id) WHERE max_chat_id = $3',
+        [chatInfo.title ?? null, discussionChatId, chatId]
       );
-      logger.info('Канал реактивирован (бот добавлен повторно)', {
-        chatId,
-        channelId: existingChannel.id,
-      });
+      logger.info('Канал реактивирован', { chatId, channelId: existingChannel.id, discussionChatId });
     } else {
       // Новый канал: создаём скрытый групповой чат для хранения комментариев
       const discussionTitle = `[MC] ${chatInfo.title ?? chatId}`;

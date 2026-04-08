@@ -51,7 +51,7 @@ describe('onBotStarted', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(db.upsertUser).mockResolvedValue({ id: 1, referred_by: null } as any);
-    vi.mocked(maxClient.sendMessageToUser).mockResolvedValue(undefined);
+    vi.mocked(maxClient.sendMessageToUser).mockResolvedValue(undefined as any);
     vi.mocked(db.pool.query).mockResolvedValue({ rows: [] } as any);
   });
 
