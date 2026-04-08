@@ -40,7 +40,14 @@ function validateInitData(initData: string, token: string): MaxUser | null {
     const userStr = params.get('user');
     if (!userStr) return null;
 
-    return JSON.parse(userStr) as MaxUser;
+    // MAX initData использует поля id/first_name (как Telegram), не user_id/name
+    const raw = JSON.parse(userStr);
+    return {
+      user_id:  raw.user_id  ?? raw.id,
+      name:     raw.name     ?? raw.first_name ?? String(raw.id ?? ''),
+      username: raw.username ?? undefined,
+      is_bot:   raw.is_bot   ?? false,
+    };
   } catch {
     return null;
   }

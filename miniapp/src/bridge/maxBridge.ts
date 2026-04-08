@@ -1,10 +1,13 @@
 // Типизированная обёртка над window.WebApp (MAX Bridge)
 
 interface MaxUser {
-  user_id: number;
-  name: string;
+  id?: number;        // реальное поле MAX/Telegram
+  user_id?: number;   // алиас (на случай других версий bridge)
+  first_name?: string;
+  last_name?: string;
+  name?: string;
   username?: string;
-  is_bot: boolean;
+  is_bot?: boolean;
 }
 
 interface MaxWebApp {
