@@ -110,6 +110,19 @@ export async function getChatInfo(chatId: string): Promise<unknown> {
   return request('GET', `/chats/${chatId}`);
 }
 
+// Получить список администраторов канала/чата
+export async function getChatAdmins(chatId: string): Promise<{
+  members: Array<{
+    user_id: number;
+    name: string;
+    username?: string;
+    is_owner?: boolean;
+    role?: string;
+  }>;
+}> {
+  return request('GET', `/chats/${chatId}/members/admins`);
+}
+
 // Создать групповой чат (для хранилища комментариев)
 export async function createChat(title: string): Promise<{ chat_id: string }> {
   return request<{ chat_id: string }>('POST', '/chats', { title });

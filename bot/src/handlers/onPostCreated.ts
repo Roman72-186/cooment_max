@@ -73,21 +73,56 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
 }
 
 // Авторегистрация канала при первом посте
-// MAX API не позволяет создавать группы программно — скрытый групчат не используется
+// Пытается определить владельца через GET /chats/{id}/members/admins
 async function autoRegisterChannel(chatId: string | number): Promise<Channel | null> {
   try {
     const chatInfo = await maxClient.getChatInfo(String(chatId)) as { chat_id: string; title?: string };
     const title = chatInfo.title ?? String(chatId);
 
+    // Пытаемся найти владельца канала через список администраторов
+    let ownerId: number | null = null;
+    try {
+      const adminsResp = await maxClient.getChatAdmins(String(chatId));
+      const members = adminsResp?.members ?? [];
+
+      // Ищем владельца: поле is_owner=true или role='owner', иначе берём первого администратора
+      const ownerMember =
+        members.find((m) => m.is_owner === true || m.role === 'owner') ??
+        members[0];
+
+      if (ownerMember) {
+        const owner = await db.upsertUser({
+          max_user_id: ownerMember.user_id,
+          name: ownerMember.name,
+          username: ownerMember.username,
+        });
+        ownerId = owner.id;
+        logger.info('Владелец канала определён автоматически', {
+          chatId,
+          ownerMaxId: ownerMember.user_id,
+          ownerId,
+        });
+      }
+    } catch (adminErr) {
+      // Не критично — канал зарегистрируем без owner_id
+      logger.warn('Не удалось получить список администраторов', {
+        chatId,
+        err: adminErr instanceof Error ? adminErr.message : String(adminErr),
+      });
+    }
+
     const result = await db.pool.query<Channel>(
-      `INSERT INTO channels (max_chat_id, channel_name)
-       VALUES ($1, $2)
-       ON CONFLICT (max_chat_id) DO UPDATE SET is_active = true, channel_name = EXCLUDED.channel_name
+      `INSERT INTO channels (max_chat_id, channel_name, owner_id)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (max_chat_id) DO UPDATE
+         SET is_active = true,
+             channel_name = EXCLUDED.channel_name,
+             owner_id = COALESCE(channels.owner_id, EXCLUDED.owner_id)
        RETURNING *`,
-      [String(chatId), title]
+      [String(chatId), title, ownerId]
     );
 
-    logger.info('Канал авторегистрирован', { chatId, title, channelId: result.rows[0]?.id });
+    logger.info('Канал авторегистрирован', { chatId, title, ownerId, channelId: result.rows[0]?.id });
     return result.rows[0] ?? null;
   } catch (err) {
     logger.error('Ошибка авторегистрации канала', {
