@@ -2,8 +2,9 @@
 import axios from 'axios';
 import { getInitData } from '../bridge/maxBridge';
 
+// baseURL пустой — запросы идут на тот же домен (Vercel проксирует /api/* → наш сервер)
 const api = axios.create({
-  baseURL: import.meta.env.VITE_BACKEND_URL ?? '',
+  baseURL: '',
   timeout: 10000,
 });
 
