@@ -18,10 +18,36 @@
 | [[04-Business/Competitor-Analysis]] | Сравнение с Tapbox.ru |
 | [[05-DevLog/2026-04-07-kickoff]] | Старт проекта |
 | [[05-DevLog/2026-04-08-progress]] | Шаги 12–15: бот, Mini App, backend |
+| [[05-DevLog/2026-04-08-vps-migration]] | Перенос с Vercel на VPS, фикс SDK, startapp |
+| [[05-DevLog/2026-04-08-final-working]] | ✅ Итоговое рабочее состояние системы |
 | [[06-Decisions/ADR-001-tech-stack]] | ADR-001: Выбор технологического стека |
+| [[06-Decisions/ADR-002-no-vercel]] | ADR-002: Отказ от Vercel — Mini App на VPS |
 
 ## Быстрые ссылки
 
 - **Спецификация:** `MAX_Comments_Build_Instructions_v2.md` в корне репо
 - **Порядок сборки:** Section 11 спецификации (24 шага)
 - **Критический файл:** `bot/src/handlers/onPostCreated.ts`
+- **Mini App:** https://sushi-house-39.online
+- **API:** https://sushi-house-39.online/api/
+- **Последний стабильный коммит:** `d93d18a`
+
+## Статус шагов (Section 11)
+
+| Шаг | Описание | Статус |
+|-----|----------|--------|
+| 1–11 | Инфраструктура, бот, Docker, SSL | ✅ |
+| 12 | E2E: кнопка появляется на посте | ✅ |
+| 13 | Mini App — CommentsPage | ✅ |
+| 14 | Mini App открывается в MAX | ✅ |
+| 15 | Backend REST API | ✅ |
+| 15+ | Комментарии можно писать | ✅ |
+| 16 | OnboardingPage | ⏳ |
+| 17 | DashboardPage | ⏳ |
+| 18 | AnalyticsPage (PRO) | ⏳ |
+| 19 | ЮКасса платежи | ⏳ |
+| 20 | PricingPage + SettingsPage + рефералки | ⏳ |
+| 21 | Полный E2E тест | ⏳ |
+| 22 | deploy.sh | ✅ (готов) |
+| 23 | Боевой токен MAX | ⏳ |
+| 24 | Мягкий запуск | ⏳ |

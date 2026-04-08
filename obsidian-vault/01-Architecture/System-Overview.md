@@ -1,61 +1,93 @@
-# Обзор системы
+# Архитектура системы
 
-## Суть платформы
+> Актуально на 2026-04-08. Vercel убран — всё на VPS.
 
-MAX Comments — сервис, добавляющий комментарии к постам в каналах MAX messenger. MAX намеренно не предоставляет нативные комментарии. Мы используем паттерн «бот как посредник».
-
-## Паттерн «Bot-as-Middleware»
+## Схема взаимодействия
 
 ```
-Канал MAX
-  │
-  ├─ Владелец добавляет бота как ADMIN
-  │    Права: читать, постить, редактировать сообщения
-  │
-  ├─ Бот создаёт/привязывает скрытый групповой чат
-  │    (хранилище комментариев — подписчики его не видят)
-  │
-  └─ Новый пост → Webhook → наш сервер
-       │
-       ├─ Репостит пост в скрытый чат
-       └─ Редактирует оригинал: прикрепляет кнопку [💬 Комментарии (0)]
-                                                          ↓
-                                               open_app → Mini App
-                                               ?startapp=post_<ID>
+Подписчик MAX
+    │ нажимает кнопку «💬 Комментарии»
+    ▼
+https://sushi-house-39.online/          ← Mini App (React SPA)
+    │ GET/POST /api/comments
+    ▼
+https://sushi-house-39.online/api/      ← REST API (mc_backend:3001)
+    │
+    ▼
+PostgreSQL (mc_postgres:5432)
+
+──────────────────────────────────
+
+Владелец канала публикует пост
+    │
+    ▼
+MAX Webhook → https://sushi-house-39.online/webhook
+    │
+    ▼
+mc_bot:3000
+    ├── Сохраняет пост в БД
+    ├── Редактирует пост: добавляет кнопку «💬 Комментарии»
+    └── Каждые 60 сек — обновляет счётчик комментариев на кнопках
 ```
 
 ## Сервисы
 
+| Сервис | Контейнер | Порт | Назначение |
+|--------|-----------|------|-----------|
+| Nginx | mc_nginx | 80, 443 | SSL терминация, раздаёт Mini App (/), роутит /api/ и /webhook |
+| Bot | mc_bot | 3000 (внутр.) | MAX webhook + фоновые задачи |
+| Backend API | mc_backend | 3001 (внутр.) | REST API для Mini App |
+| PostgreSQL | mc_postgres | 5432 (внутр.) | Основная БД |
+| Redis | mc_redis | 6379 (внутр.) | Кэш + очереди задач |
+
+Все контейнеры в Docker-сети `max-comments-net`.
+
+## Инфраструктура
+
+- **VPS:** 89.169.2.231
+- **Домен:** sushi-house-39.online (Let's Encrypt SSL)
+- **Сертификат:** /opt/max-comments/infra/ssl/ (обновлять certbot renew)
+- **Проект:** /opt/max-comments/
+- **Конфиг:** /opt/max-comments/infra/.env
+
+## Как собирается Mini App
+
 ```
-mc_nginx (SSL терминация)
-  ├─ /webhook → mc_bot:3000
-  └─ /api/*   → mc_backend:3001
+infra/Dockerfile.nginx (multi-stage):
+  Stage 1: node:20-alpine
+    COPY miniapp/package*.json
+    RUN npm ci
+    COPY miniapp/
+    RUN npm run build  → dist/
 
-mc_bot (Node.js + TypeScript)
-  ├─ Принимает webhook-события MAX
-  ├─ Обрабатывает посты → кнопки → счётчики
-  └─ Фоновые задачи: updateCounters (60с), analyticsDaily (ночью)
-
-mc_backend (Node.js + TypeScript)
-  ├─ REST API для Mini App
-  ├─ HMAC-авторизация через MAX Bridge initData
-  └─ PRO-gate для платных функций
-
-mc_postgres (PostgreSQL 15)
-  └─ Основное хранилище данных
-
-mc_redis (Redis 7)
-  └─ Кэш + очередь задач
+  Stage 2: nginx:alpine
+    COPY dist/ → /var/www/miniapp
+    (nginx.conf монтируется при запуске)
 ```
 
-## Сеть
+nginx.conf:
+- `location /`      → `/var/www/miniapp` (React SPA, try_files → index.html)
+- `location /api/`  → `mc_backend:3001`
+- `location /webhook` → `mc_bot:3000`
 
-Все контейнеры в изолированной сети `max-comments-net`.
-Порты Nginx настраиваются через `.env` (не 80/443 — на VPS уже могут быть другие сервисы).
+## Деплой
 
-## Mini App
+```bash
+# Скопировать изменённые файлы на сервер
+scp infra/* root@sushi-house-39.online:/opt/max-comments/infra/
+scp -r miniapp/src miniapp/package*.json miniapp/*.ts miniapp/index.html \
+    root@sushi-house-39.online:/opt/max-comments/miniapp/
 
-React + Vite + TypeScript приложение.
-Хостится на Vercel (или VPS).
-Открывается внутри MAX через кнопку типа `open_app`.
-Для работы требует `bridge.js` от MAX, загруженного **первым** в `index.html`.
+# Пересобрать и перезапустить
+ssh root@sushi-house-39.online \
+  "cd /opt/max-comments/infra && docker compose up -d --build mc_nginx mc_backend mc_bot"
+```
+
+## URL
+
+| Ресурс | URL |
+|--------|-----|
+| Mini App | https://sushi-house-39.online/ |
+| API | https://sushi-house-39.online/api/ |
+| Webhook | https://sushi-house-39.online/webhook |
+| GitHub | https://github.com/Roman72-186/cooment_max.git |
