@@ -46,8 +46,8 @@ services:
     depends_on: [mc_postgres, mc_redis]
     env_file: .env
     dns:
-      - 8.8.8.8
-      - 1.1.1.1
+      - 85.193.93.194
+      - 85.193.93.193
 
   # 4. Backend — REST API для Mini App
   mc_backend:
@@ -60,8 +60,8 @@ services:
     depends_on: [mc_postgres, mc_redis]
     env_file: .env
     dns:
-      - 8.8.8.8
-      - 1.1.1.1
+      - 85.193.93.194
+      - 85.193.93.193
 
   # 5. Nginx — раздаёт Mini App + обратный прокси для API/webhook
   mc_nginx:
@@ -75,6 +75,7 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./ssl:/etc/nginx/ssl:ro
+      - ./static/legal:/var/www/legal:ro
     ports:
       - '${NGINX_HTTP_PORT:-80}:80'
       - '${NGINX_HTTPS_PORT:-443}:443'

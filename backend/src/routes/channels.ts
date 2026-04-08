@@ -53,13 +53,31 @@ channelsRouter.get('/:id/analytics', requireAuth, async (req, res) => {
       return;
     }
 
-    // Данные по дням из analytics_daily
+    // Данные по дням — живой подсчёт из comments (не ждём ночной агрегации)
     const { rows: dayRows } = await pool.query(
-      `SELECT date, views, comments, reactions
-         FROM analytics_daily
-        WHERE channel_id = $1
-          AND date >= CURRENT_DATE - ($2 || ' days')::interval
-        ORDER BY date ASC`,
+      `SELECT
+         d.date::text                                          AS date,
+         0                                                     AS views,
+         COALESCE(agg.comments, 0)::int                       AS comments,
+         COALESCE(agg.reactions, 0)::int                      AS reactions
+       FROM generate_series(
+         CURRENT_DATE - ($2::int - 1) * INTERVAL '1 day',
+         CURRENT_DATE,
+         '1 day'
+       ) AS d(date)
+       LEFT JOIN (
+         SELECT
+           DATE(c.created_at)          AS day,
+           COUNT(c.id)                 AS comments,
+           COUNT(r.comment_id)         AS reactions
+         FROM comments c
+         JOIN posts p ON p.id = c.post_id
+         LEFT JOIN comment_reactions r ON r.comment_id = c.id
+         WHERE p.channel_id = $1
+           AND c.is_hidden = false
+         GROUP BY DATE(c.created_at)
+       ) agg ON agg.day = d.date
+       ORDER BY d.date ASC`,
       [channelId, days]
     );
 

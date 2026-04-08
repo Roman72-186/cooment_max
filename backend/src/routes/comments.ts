@@ -102,17 +102,29 @@ commentsRouter.post('/', requireAuth, async (req, res) => {
     );
     const authorId = userResult.rows[0].id;
 
-    const { rows } = await pool.query(
-      `INSERT INTO comments (post_id, author_id, parent_id, text)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, post_id, author_id, parent_id, text, is_hidden, created_at`,
-      [post_id, authorId, parent_id ?? null, text.trim()]
-    );
-
-    await pool.query(
-      'UPDATE posts SET comment_count = comment_count + 1 WHERE id = $1',
+    // Проверяем стоп-слова канала
+    const { rows: chRows } = await pool.query(
+      `SELECT ch.banned_words FROM posts p JOIN channels ch ON ch.id = p.channel_id WHERE p.id = $1`,
       [post_id]
     );
+    const bannedWords: string[] = chRows[0]?.banned_words ?? [];
+    const lowerText = text.trim().toLowerCase();
+    const isHidden = bannedWords.some((w) => lowerText.includes(w.toLowerCase()));
+
+    const { rows } = await pool.query(
+      `INSERT INTO comments (post_id, author_id, parent_id, text, is_hidden)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, post_id, author_id, parent_id, text, is_hidden, created_at`,
+      [post_id, authorId, parent_id ?? null, text.trim(), isHidden]
+    );
+
+    // Счётчик обновляем только если комментарий виден
+    if (!isHidden) {
+      await pool.query(
+        'UPDATE posts SET comment_count = comment_count + 1 WHERE id = $1',
+        [post_id]
+      );
+    }
 
     const row = rows[0];
     res.status(201).json({

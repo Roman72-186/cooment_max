@@ -123,30 +123,35 @@ describe('onBotAdded', () => {
 
   // ─── Новый канал ────────────────────────────────────────────
 
-  it('создаёт discussion chat для нового канала', async () => {
+  it('вызывает upsertChannel для нового канала (без createChat — MAX API не поддерживает)', async () => {
     vi.mocked(db.getChannelByMaxChatId).mockResolvedValue(null);
     await onBotAdded(makeUpdate() as any);
-    expect(maxClient.createChat).toHaveBeenCalledWith('[MC] Мой канал');
+    expect(db.upsertChannel).toHaveBeenCalled();
+    expect(maxClient.createChat).not.toHaveBeenCalled();
   });
 
-  it('сохраняет канал в БД с discussion_chat_id', async () => {
+  it('сохраняет канал в БД без discussion_chat_id', async () => {
     vi.mocked(db.getChannelByMaxChatId).mockResolvedValue(null);
     await onBotAdded(makeUpdate() as any);
     expect(db.upsertChannel).toHaveBeenCalledWith(
       expect.objectContaining({
-        max_chat_id:        'ch_123',
-        discussion_chat_id: 'disc_456',
-        channel_name:       'Мой канал',
+        max_chat_id:  'ch_123',
+        channel_name: 'Мой канал',
       })
     );
+    const arg = vi.mocked(db.upsertChannel).mock.calls[0][0];
+    expect(arg).not.toHaveProperty('discussion_chat_id');
   });
 
-  it('использует chat_id как fallback если title пустой', async () => {
+  it('сохраняет channel_name = null если title пустой', async () => {
     vi.mocked(maxClient.getChatInfo).mockResolvedValue({
       chat_id: 'ch_123', title: undefined as any, type: 'channel',
     });
     await onBotAdded(makeUpdate() as any);
-    expect(maxClient.createChat).toHaveBeenCalledWith('[MC] ch_123');
+    expect(db.upsertChannel).toHaveBeenCalledWith(
+      expect.objectContaining({ channel_name: null })
+    );
+    expect(maxClient.createChat).not.toHaveBeenCalled();
   });
 
   // ─── Реактивация существующего канала ───────────────────────

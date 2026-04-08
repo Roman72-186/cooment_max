@@ -6,6 +6,7 @@ import { reactionsRouter } from './routes/reactions.js';
 import { userRouter } from './routes/user.js';
 import { channelsRouter } from './routes/channels.js';
 import { paymentsRouter } from './routes/payments.js';
+import { startAutoRenewJob } from './jobs/autoRenew.js';
 
 const app = express();
 app.use(express.json());
@@ -39,6 +40,9 @@ app.use('/api/payments', paymentsRouter);
 app.use((_req, res) => {
   res.status(404).json({ error: 'Маршрут не найден' });
 });
+
+// Запускаем фоновые задачи
+startAutoRenewJob();
 
 const PORT = parseInt(process.env.BACKEND_PORT ?? '3001', 10);
 app.listen(PORT, () => {

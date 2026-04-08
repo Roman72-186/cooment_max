@@ -1,7 +1,9 @@
 // Хендлер: бот добавлен в канал
-// Регистрирует канал в БД и создаёт скрытый групповой чат для хранения комментариев
+// Регистрирует канал в БД
+// MAX API не поддерживает создание группчатов ботом (POST /chats → 404)
+// Комментарии хранятся напрямую в PostgreSQL
 
-import { getChatInfo, getChatAdmins, createChat, sendMessageToUser } from '../api/maxClient.js';
+import { getChatInfo, getChatAdmins, sendMessageToUser } from '../api/maxClient.js';
 import * as db from '../db/db.js';
 import { logger } from '../utils/logger.js';
 import { pool } from '../db/db.js';
@@ -71,33 +73,20 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
     const existingChannel = await db.getChannelByMaxChatId(chatId);
 
     if (existingChannel) {
-      // Реактивация: снимаем is_active = false
-      // Если discussion_chat_id пустой (например, первый раз создание упало) — создаём сейчас
-      let discussionChatId = existingChannel.discussion_chat_id;
-      if (!discussionChatId) {
-        const discussionTitle = `[MC] ${chatInfo.title ?? chatId}`;
-        const discussionChat = await createChat(discussionTitle);
-        discussionChatId = discussionChat.chat_id;
-        logger.info('Скрытый групчат создан при реактивации', { discussionChatId });
-      }
-
+      // Реактивация: просто снимаем is_active = false, обновляем название
       await pool.query(
-        'UPDATE channels SET is_active = true, channel_name = $1, discussion_chat_id = COALESCE($2, discussion_chat_id) WHERE max_chat_id = $3',
-        [chatInfo.title ?? null, discussionChatId, chatId]
+        'UPDATE channels SET is_active = true, channel_name = $1 WHERE max_chat_id = $2',
+        [chatInfo.title ?? null, chatId]
       );
-      logger.info('Канал реактивирован', { chatId, channelId: existingChannel.id, discussionChatId });
+      logger.info('Канал реактивирован', { chatId, channelId: existingChannel.id });
     } else {
-      // Новый канал: создаём скрытый групповой чат для хранения комментариев
-      const discussionTitle = `[MC] ${chatInfo.title ?? chatId}`;
-      const discussionChat = await createChat(discussionTitle);
-      logger.info('Скрытый групчат создан', { discussionChatId: discussionChat.chat_id });
-
+      // Новый канал
       await db.upsertChannel({
         owner_id: owner.id,
         max_chat_id: chatId,
         channel_name: chatInfo.title ?? null,
-        discussion_chat_id: discussionChat.chat_id,
       });
+      logger.info('Канал зарегистрирован', { chatId, ownerId: owner.id });
     }
 
     // Отправляем подтверждение реальному владельцу в личку
@@ -106,7 +95,6 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
       `✅ Канал **${chatInfo.title ?? chatId}** подключён!\n\nКаждый новый пост будет получать кнопку «💬 Комментарии».\n\nОткройте панель управления для настройки.`
     );
 
-    logger.info('Канал зарегистрирован', { chatId, ownerId: owner.id });
   } catch (err) {
     logger.error('Ошибка при добавлении бота в канал', { chatId, err });
   }

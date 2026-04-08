@@ -1,5 +1,5 @@
 // Корневой компонент — маршрутизация по start_param и внутреннему состоянию
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { getStartParam, notifyReady } from './bridge/maxBridge';
 import { getUserMe } from './api/backend';
 import { useAppStore } from './store/useAppStore';
@@ -65,32 +65,57 @@ export function App() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Рендер по текущей странице
+  let content: React.ReactNode;
+  let showFooter = true;
+
   switch (page.id) {
     case 'loading':
-      return (
+      content = (
         <div className="page page--center">
           <div className="skeleton-list">
             {[1, 2, 3].map((i) => <div key={i} className="skeleton-item" />)}
           </div>
         </div>
       );
+      showFooter = false;
+      break;
 
     case 'comments':
-      return <CommentsPage postId={page.postId} />;
+      content = <CommentsPage postId={page.postId} />;
+      showFooter = false;
+      break;
 
-    case 'onboarding':
-      return <OnboardingPage />;
-
-    case 'dashboard':
-      return <DashboardPage />;
-
-    case 'analytics':
-      return <AnalyticsPage channelId={page.channelId} />;
-
-    case 'settings':
-      return <SettingsPage channelId={page.channelId} />;
-
-    case 'pricing':
-      return <PricingPage />;
+    case 'onboarding':  content = <OnboardingPage />;                      break;
+    case 'dashboard':   content = <DashboardPage />;                       break;
+    case 'analytics':   content = <AnalyticsPage channelId={page.channelId} />; break;
+    case 'settings':    content = <SettingsPage channelId={page.channelId} />;  break;
+    case 'pricing':     content = <PricingPage />;                         break;
   }
+
+  return (
+    <>
+      {content}
+      {showFooter && (
+        <footer style={{ padding: '12px 16px 20px', textAlign: 'center', fontSize: '12px', color: '#aaa' }}>
+          <a
+            href="https://sushi-house-39.online/legal/offer"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: '#aaa' }}
+          >
+            Оферта
+          </a>
+          {' · '}
+          <a
+            href="https://sushi-house-39.online/legal/privacy"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: '#aaa' }}
+          >
+            Политика ПДн
+          </a>
+        </footer>
+      )}
+    </>
+  );
 }
