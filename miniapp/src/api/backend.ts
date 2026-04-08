@@ -2,9 +2,9 @@
 import axios from 'axios';
 import { getInitData } from '../bridge/maxBridge';
 
-// baseURL пустой — запросы идут на тот же домен (Vercel проксирует /api/* → наш сервер)
+// baseURL — прямой адрес бэкенда (CORS разрешён, прокси не нужен)
 const api = axios.create({
-  baseURL: '',
+  baseURL: 'https://sushi-house-39.online',
   timeout: 10000,
 });
 
