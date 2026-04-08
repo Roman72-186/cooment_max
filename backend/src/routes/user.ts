@@ -28,14 +28,22 @@ userRouter.get('/me', requireAuth, async (req, res) => {
     const { rows: channelRows } = await pool.query(
       `SELECT
          id, max_chat_id, channel_name, is_active,
-         post_count, total_comments, comments_enabled, connected_at
+         post_count, total_comments, comments_enabled, banned_words, connected_at
        FROM channels
        WHERE owner_id = $1
        ORDER BY connected_at DESC`,
       [user.id]
     );
 
-    res.json({ ...user, channels: channelRows });
+    // pg возвращает BIGINT как строку — приводим к числу
+    const userNorm = {
+      ...user,
+      id:           Number(user.id),
+      max_user_id:  Number(user.max_user_id),
+      referred_by:  user.referred_by != null ? Number(user.referred_by) : null,
+    };
+
+    res.json({ ...userNorm, channels: channelRows });
   } catch (err) {
     console.error('GET /api/user/me error:', err);
     res.status(500).json({ error: 'Ошибка сервера' });

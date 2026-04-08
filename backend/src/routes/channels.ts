@@ -7,10 +7,19 @@ import { requireAuth } from '../middleware/auth.js';
 export const channelsRouter = Router();
 
 // ─── Хелпер: проверяем что текущий юзер — владелец канала ────────
+// Возвращает: { id } — успех, null — нет канала, 'forbidden' — нет прав
 async function getOwnedChannel(
   channelId: number,
   maxUserId: number
-): Promise<{ id: number } | null> {
+): Promise<{ id: number } | null | 'forbidden'> {
+  // Сначала проверяем что канал вообще существует
+  const { rows: existing } = await pool.query(
+    'SELECT id, owner_id FROM channels WHERE id = $1',
+    [channelId]
+  );
+  if (!existing[0]) return null;
+
+  // Затем проверяем владельца
   const { rows } = await pool.query(
     `SELECT ch.id
        FROM channels ch
@@ -18,7 +27,8 @@ async function getOwnedChannel(
       WHERE ch.id = $1 AND u.max_user_id = $2`,
     [channelId, maxUserId]
   );
-  return rows[0] ?? null;
+  if (!rows[0]) return 'forbidden';
+  return rows[0];
 }
 
 // ─── GET /api/channels/:id/analytics?days=7 ──────────────────────
@@ -34,8 +44,12 @@ channelsRouter.get('/:id/analytics', requireAuth, async (req, res) => {
 
   try {
     const channel = await getOwnedChannel(channelId, maxUser.user_id);
-    if (!channel) {
-      res.status(404).json({ error: 'Канал не найден или нет прав' });
+    if (channel === null) {
+      res.status(404).json({ error: 'Канал не найден' });
+      return;
+    }
+    if (channel === 'forbidden') {
+      res.status(403).json({ error: 'Нет прав' });
       return;
     }
 
@@ -120,8 +134,12 @@ channelsRouter.patch('/:id/settings', requireAuth, async (req, res) => {
 
   try {
     const channel = await getOwnedChannel(channelId, maxUser.user_id);
-    if (!channel) {
-      res.status(404).json({ error: 'Канал не найден или нет прав' });
+    if (channel === null) {
+      res.status(404).json({ error: 'Канал не найден' });
+      return;
+    }
+    if (channel === 'forbidden') {
+      res.status(403).json({ error: 'Нет прав' });
       return;
     }
 

@@ -53,11 +53,14 @@ commentsRouter.get('/', optionalAuth, async (req, res) => {
       [postId, currentUserDbId]
     );
 
-    // pg возвращает BIGINT как строку — приводим к числу,
-    // чтобы фронтенд мог корректно сравнивать с id из MAX Bridge
+    // pg возвращает BIGINT как строку — приводим все числовые поля к Number
     const normalized = rows.map((row) => ({
       ...row,
-      author_max_id: Number(row.author_max_id),
+      id:                   Number(row.id),
+      post_id:              Number(row.post_id),
+      author_id:            Number(row.author_id),
+      parent_id:            row.parent_id != null ? Number(row.parent_id) : null,
+      author_max_id:        Number(row.author_max_id),
       channel_owner_max_id: Number(row.channel_owner_max_id),
     }));
     res.json(normalized);
@@ -111,13 +114,20 @@ commentsRouter.post('/', requireAuth, async (req, res) => {
       [post_id]
     );
 
+    const row = rows[0];
     res.status(201).json({
-      ...rows[0],
-      author_name: maxUser.name,
+      id:              Number(row.id),
+      post_id:         Number(row.post_id),
+      author_id:       Number(row.author_id),
+      parent_id:       row.parent_id != null ? Number(row.parent_id) : null,
+      text:            row.text,
+      is_hidden:       row.is_hidden,
+      created_at:      row.created_at,
+      author_name:     maxUser.name,
       author_username: maxUser.username,
-      author_max_id: maxUser.user_id,
-      likes_count: 0,
-      liked_by_me: false,
+      author_max_id:   maxUser.user_id,
+      likes_count:     0,
+      liked_by_me:     false,
     });
   } catch (err) {
     console.error('POST /api/comments error:', err);
@@ -149,6 +159,12 @@ commentsRouter.delete('/:id', requireAuth, async (req, res) => {
     );
 
     if (!rows[0]) {
+      res.status(404).json({ error: 'Комментарий не найден' });
+      return;
+    }
+
+    // Уже скрыт — идемпотентный ответ: 404
+    if (rows[0].is_hidden) {
       res.status(404).json({ error: 'Комментарий не найден' });
       return;
     }
