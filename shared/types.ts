@@ -48,8 +48,13 @@ export interface Comment {
   text: string;
   is_hidden: boolean;
   created_at: string;
-  // Вложенные данные (приходят с бэкенда при запросе треда)
-  author?: Pick<User, 'name' | 'username'>;
+  // Поля из JOIN-запросов (добавляются в API-ответах)
+  author_name?: string;
+  author_username?: string;
+  author_max_id?: number;          // MAX user ID автора — для проверки прав удаления
+  channel_owner_max_id?: number;   // MAX user ID владельца канала
+  likes_count?: number;            // количество ❤️ на комментарии
+  liked_by_me?: boolean;           // текущий пользователь поставил ❤️
   replies?: Comment[];
 }
 

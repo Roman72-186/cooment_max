@@ -123,10 +123,12 @@ commentsRouter.delete('/:id', requireAuth, async (req, res) => {
   const maxUser = req.maxUser!;
 
   try {
-    // Получаем автора и владельца канала одним запросом
+    // Получаем автора, владельца канала и post_id одним запросом
     const { rows } = await pool.query(
       `SELECT
          c.id,
+         c.post_id,
+         c.is_hidden,
          author_u.max_user_id  AS author_max_id,
          owner_u.max_user_id   AS channel_owner_max_id
        FROM comments c
@@ -151,10 +153,19 @@ commentsRouter.delete('/:id', requireAuth, async (req, res) => {
       return;
     }
 
+    // Скрываем комментарий
     await pool.query(
       'UPDATE comments SET is_hidden = true WHERE id = $1',
       [commentId]
     );
+
+    // Декрементируем счётчик только если комментарий ещё не был скрыт
+    if (!rows[0].is_hidden) {
+      await pool.query(
+        'UPDATE posts SET comment_count = GREATEST(0, comment_count - 1) WHERE id = $1',
+        [rows[0].post_id]
+      );
+    }
 
     res.status(204).send();
   } catch (err) {

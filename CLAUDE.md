@@ -12,94 +12,96 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**MAX Comments Platform** — a commenting system for MAX messenger (80M+ users, 170K+ channels). MAX has no native comments by design. This platform fills that gap using a bot-as-middleware pattern combined with a Mini App UI.
+**MAX Comments Platform** — система комментариев для MAX мессенджера (80M+ пользователей, 170K+ каналов). В MAX нет нативных комментариев. Платформа решает это через паттерн bot-as-middleware + Mini App UI.
 
-The full specification lives in `MAX_Comments_Build_Instructions_v2.md`. **Read every section before writing code.** The build order in Section 11 is sequential and must not be skipped.
+Полная спецификация — в `MAX_Comments_Build_Instructions_v2.md`. Порядок сборки в секции 11 строго последовательный.
 
 ---
 
 ## Architecture
 
-### Bot-as-Middleware Pattern (Critical to Understand)
+### Bot-as-Middleware Pattern
 
-1. Channel owner adds our bot as **admin** to their channel (rights: read, post, edit messages)
-2. Bot also administers a hidden **group chat** (the actual comment store — invisible to subscribers)
-3. When a post is published → webhook fires → bot does TWO things simultaneously:
-   - Reposts the channel post into the hidden group chat
-   - Edits the original post to attach an inline `[💬 Comments (0)]` button (`open_app` type)
-4. Subscriber taps the button → Mini App opens inside MAX with `?startapp=post_<ID>`
-5. Mini App fetches/posts comments via the REST API backend
-6. A background job updates comment counters on buttons every 60 seconds
+1. Владелец канала добавляет бота как **admin** (права: read, post, edit)
+2. Бот создаёт скрытый **group chat** — физическое хранилище комментариев
+3. Публикация поста → webhook → бот делает **два действия одновременно**:
+   - Репостит пост в скрытый group chat
+   - Редактирует оригинальный пост — прикрепляет кнопку `[💬 Comments (0)]` (тип `open_app`)
+4. Подписчик нажимает → открывается Mini App с `?startapp=post_<ID>`
+5. Mini App работает с REST API backend
+6. Фоновый job обновляет счётчики комментариев каждые 60 секунд
 
 ### Services
 
-| Service | Where | Port | Purpose |
-|---------|-------|------|---------|
-| Bot | `mc_bot` (VPS) | 3000 | MAX webhook receiver + background jobs |
-| Backend API | `mc_backend` (VPS) | 3001 | REST API for Mini App |
-| PostgreSQL | Supabase (managed) | 6543 | Primary data store — connection pooler |
-| Redis | `mc_redis` (VPS) | 6379 | Cache + job queue |
-| Nginx | `mc_nginx` (VPS) | configurable | SSL termination + routing |
-| Mini App | Vercel | — | React UI, auto-deploy from GitHub |
+| Service | Container | Port | Purpose |
+|---------|-----------|------|---------|
+| Bot | `mc_bot` | 3000 | MAX webhook receiver + background jobs |
+| Backend API | `mc_backend` | 3001 | REST API для Mini App |
+| PostgreSQL | Supabase (managed) | 6543 | Основное хранилище — transaction pooler |
+| Redis | `mc_redis` | 6379 | Cache + job queue |
+| Nginx | `mc_nginx` | custom | SSL termination + routing |
+| Mini App | Vercel | — | React UI, auto-deploy из GitHub |
 
-VPS containers share `max-comments-net` bridge network. All container/volume names are prefixed `mc_` to avoid conflicts with other services on the VPS.
+VPS-контейнеры объединены в bridge-сеть `max-comments-net`. Все контейнеры/volumes с префиксом `mc_`.
 
-**Supabase connection:** use the **transaction pooler** URL (`port 6543`) — the direct host (`db.xxx.supabase.co`) resolves to IPv6 only, which causes `ENETUNREACH` inside Docker containers.
+**Supabase**: всегда использовать **transaction pooler** (port 6543) — прямой хост `db.xxx.supabase.co` резолвится только в IPv6, что вызывает `ENETUNREACH` внутри Docker bridge-сети.
 
-### Directory Layout
+---
+
+## Directory Layout
 
 ```
-bot/          — Node.js/TypeScript MAX webhook bot
-backend/      — Node.js/TypeScript REST API
-miniapp/      — React/Vite/TypeScript Mini App
-shared/       — TypeScript types shared across all services
-infra/        — Docker Compose, Nginx config, SSL, deploy scripts
-obsidian-vault/ — Project documentation (update after each major step)
+bot/        — Node.js/TypeScript бот: webhook, polling, handlers, background jobs
+backend/    — Node.js/TypeScript REST API для Mini App
+miniapp/    — React/Vite/TypeScript Mini App
+shared/     — Общие TypeScript типы (User, Channel, Post, Comment, WebhookUpdate…)
+infra/      — Docker Compose, Nginx, init.sql, deploy-скрипты
+obsidian-vault/ — Документация проекта (обновлять после каждого крупного шага)
 ```
 
 ---
 
 ## Commands
 
-### Development (local, uses long polling — no HTTPS needed)
+### Development
 
 ```bash
-# Bot with polling (no webhook required locally)
+# Bot — long polling, без webhook и HTTPS
 cd bot && npm run dev
 
 # Backend API
 cd backend && npm run dev
 
-# Mini App (Vite dev server)
+# Mini App — Vite dev server
 cd miniapp && npm run dev
+
+# TypeScript typecheck (без компиляции)
+cd miniapp && npm run typecheck
+cd bot && npx tsc --noEmit
+cd backend && npx tsc --noEmit
+
+# Сборка для прода
+cd bot && npm run build
+cd backend && npm run build
+cd miniapp && npm run build
 ```
 
-### Docker (production + integration testing)
+### Docker (prod + интеграционное тестирование)
 
 ```bash
 cd infra/
 
-# Start all services
-docker-compose up -d
-
-# Full rebuild after code changes
-docker-compose up -d --build mc_bot mc_backend
-
-# Restart a single service
-docker-compose restart mc_bot
-
-# View logs
-docker-compose logs -f mc_bot
-docker-compose logs -f mc_backend
-
-# Stop (data preserved)
-docker-compose down
+docker-compose up -d                            # запустить все сервисы
+docker-compose up -d --build mc_bot mc_backend  # пересобрать после изменений кода
+docker-compose restart mc_bot                   # перезапустить один сервис
+docker-compose logs -f mc_bot                   # логи
+docker-compose down                             # остановить (данные сохранятся)
 ```
 
 ### Database
 
 ```bash
-# Supabase — управляется через dashboard (supabase.com) или psql:
+# Supabase
 psql "postgresql://postgres.lfsqjmsjldisqycyvdnw:<PASSWORD>@aws-1-eu-north-1.pooler.supabase.com:6543/postgres"
 
 # Redis
@@ -116,51 +118,103 @@ cd infra && ./deploy.sh   # git pull + build + up -d
 
 ## Key Technical Constraints
 
-- **MAX API rate limit**: 30 req/sec — never exceed this in loops or bulk operations
-- **Mini App `startapp` payload**: max 512 characters
-- **Webhook requires HTTPS** (self-signed certs are accepted by MAX)
-- **Comments** max 2000 chars, support threading via `parent_id`
-- **Private channels**: max 1000 members (same bot-as-middleware pattern as public)
-- Mini App MUST load `bridge.js` from `https://static.max.ru/static/js/bridge.js` **before** all other scripts in `index.html`
-- MAX Bridge auth uses HMAC validation of `initData` — always verify on every backend request (`src/middleware/auth.ts`)
+- **MAX API rate limit**: 30 req/sec — никогда не превышать в циклах или bulk-операциях
+- **`startapp` payload**: максимум 512 символов
+- **Webhook**: требует HTTPS (самоподписанные сертификаты MAX принимает)
+- **Комментарии**: максимум 2000 символов, threading через `parent_id`
+- **Приватные каналы**: максимум 1000 участников
+- Mini App ОБЯЗАТЕЛЬНО загружает `bridge.js` из `https://static.max.ru/static/js/bridge.js` **первым** в `index.html` — до всех остальных скриптов
+- MAX Bridge auth: HMAC-SHA256 валидация `initData` — проверять при каждом запросе в `backend/src/middleware/auth.ts`
+- Нет тестового фреймворка — тестирование через Python-скрипты в корне (check_bot.py и др.) и ручные проверки
+
+---
+
+## Code Architecture Details
+
+### Bot handlers (`bot/src/handlers/`)
+
+| Файл | Событие MAX | Что делает |
+|------|-------------|------------|
+| `onBotAdded.ts` | bot added to channel | регистрирует канал, создаёт discussion chat |
+| `onBotRemoved.ts` | bot removed | деактивирует канал |
+| `onBotStarted.ts` | user starts bot | upsert user |
+| `onPostCreated.ts` | channel post published | репост + прикрепляет кнопку Comments |
+| `onCallback.ts` | button tap | обрабатывает callback от inline кнопок |
+
+### Background jobs (`bot/src/jobs/`)
+
+- `updateCounters.ts` — каждые 60 с обновляет `comment_count` на кнопках постов через MAX editMessage
+- `analyticsDaily.ts` — агрегирует суточную статистику в `analytics_daily`
+
+### Backend routes (`backend/src/routes/`)
+
+```
+GET  /api/comments?post_id=X   — список комментариев поста
+POST /api/comments              — создать комментарий
+DEL  /api/comments/:id          — удалить комментарий
+GET  /api/posts/:id             — данные поста
+POST /api/reactions/:id         — toggle-реакция (лайк)
+GET  /health
+```
+
+### Auth flow
+
+1. Mini App передаёт `X-Init-Data` header (из `window.WebApp.initData`)
+2. `backend/src/middleware/auth.ts` валидирует через HMAC-SHA256:
+   - `secret = HMAC(BOT_TOKEN, "WebAppData")`
+   - `hash = HMAC(secret, sorted_params)`
+3. Dev-режим: валидация пропускается, используется тестовый user (id=1)
+
+### TypeScript shared types
+
+`shared/types.ts` — единственный источник типов для всех сервисов. `rootDir: ".."` в `tsconfig.json` бота и backend — намеренно, чтобы TypeScript видел `../shared/` при компиляции.
 
 ---
 
 ## Data Model (PostgreSQL)
 
-Core tables: `users`, `channels`, `posts`, `comments`, `payments`, `analytics_daily`
+Ядро: `users`, `channels`, `posts`, `comments`, `comment_reactions`, `payments`, `analytics_daily`
 
-- `channels.discussion_chat_id` — the hidden group chat where comments physically live
-- `posts.discussion_msg_id` — the repost message ID inside that group chat
-- `comments.parent_id` — nullable FK to `comments.id` for threaded replies
-- `channels.owner_id` → `users.id`; `users.plan` is `free | pro`
+- `channels.discussion_chat_id` — скрытый group chat (физическое хранилище комментариев)
+- `posts.discussion_msg_id` — ID репоста в этом group chat
+- `comments.parent_id` — nullable FK на `comments.id` для тредов
+- `channels.owner_id → users.id`; `users.plan` = `free | pro`
+- `comment_reactions` — лайки на комментарии (user_id + comment_id, unique)
 
-Indexes on: `comments.post_id`, `posts.channel_id`, `analytics_daily.(channel_id, date)`, `channels.owner_id`
+Индексы: `comments.post_id`, `posts.channel_id`, `analytics_daily.(channel_id, date)`, `channels.owner_id`
+
+Схема применяется из `infra/init.sql` при первом запуске postgres-контейнера.
 
 ---
 
 ## Environment Variables
 
-All secrets live in `infra/.env` (never commit). Template is `infra/.env.example`.
+Все секреты в `infra/.env` (не коммитить). Шаблон: `infra/.env.example`.
 
-Key variables: `MAX_BOT_TOKEN`, `WEBHOOK_URL`, `DATABASE_URL`, `REDIS_URL`, `REDIS_PASSWORD`, `MINI_APP_URL`, `NGINX_HTTP_PORT`, `NGINX_HTTPS_PORT`, `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET`
+| Переменная | Описание |
+|-----------|---------|
+| `MAX_BOT_TOKEN` | Токен бота MAX |
+| `WEBHOOK_URL` | HTTPS URL для webhook |
+| `DATABASE_URL` | Supabase transaction pooler (port 6543) |
+| `REDIS_URL` / `REDIS_PASSWORD` | Redis |
+| `MINI_APP_URL` | URL задеплоенного Mini App (Vercel) |
+| `NGINX_HTTP_PORT` / `NGINX_HTTPS_PORT` | Нестандартные порты (не 80/443) |
+| `YOOKASSA_SHOP_ID` / `YOOKASSA_SECRET` | Платёжная система |
 
-`DATABASE_URL` must point to the **Supabase transaction pooler** (port 6543). The direct connection host is IPv6-only and unreachable from Docker bridge networks.
-
-Nginx uses custom ports (not 80/443) to avoid conflicts with other VPS services — confirm exact ports with owner before configuring.
+Nginx использует нестандартные порты — уточнять у владельца VPS перед настройкой.
 
 ---
 
 ## Monetization
 
-- **FREE tier**: Basic comments, limited channels
-- **PRO tier**: 299 ₽/month — analytics dashboard, unlimited channels, moderation tools
-- Payment provider: ЮКасса (Russian payment system)
-- Referral: +30 days PRO per referred channel owner
-- PRO gates enforced server-side via `src/middleware/planGate.ts`
+- **FREE**: базовые комментарии, ограниченное число каналов
+- **PRO** (299 ₽/мес): аналитика, неограниченные каналы, инструменты модерации
+- Платёжный провайдер: ЮКасса
+- Реферальная программа: +30 дней PRO за приведённого владельца канала
+- PRO-гейты: `backend/src/middleware/planGate.ts`
 
 ---
 
 ## Obsidian Vault
 
-`obsidian-vault/` is the project memory. Update it after every major implementation step. Sections: Architecture, Bot, MiniApp, Business, DevLog, Decisions (ADRs).
+`obsidian-vault/` — память проекта. Обновлять после каждого крупного шага реализации. Разделы: Architecture, Bot, MiniApp, Business, DevLog, Decisions (ADRs).
