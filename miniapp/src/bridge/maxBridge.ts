@@ -34,8 +34,10 @@ export function getBridgeUser(): MaxUser | null {
 }
 
 // Получить стартовый параметр (например "post_42")
+// MAX передаёт через URL ?startapp= ИЛИ через initDataUnsafe.start_param
 export function getStartParam(): string | null {
-  return window.WebApp?.initDataUnsafe?.start_param ?? null;
+  const urlParam = new URLSearchParams(window.location.search).get('startapp');
+  return urlParam ?? window.WebApp?.initDataUnsafe?.start_param ?? null;
 }
 
 // Получить подписанные данные для верификации на сервере
@@ -48,7 +50,7 @@ export function notifyReady(): void {
   window.WebApp?.ready();
 }
 
-// Развернуть на весь экран
+// Развернуть на весь экран (expand может отсутствовать в MAX)
 export function expand(): void {
-  window.WebApp?.expand();
+  window.WebApp?.expand?.();
 }
