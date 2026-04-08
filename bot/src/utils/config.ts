@@ -24,8 +24,10 @@ export const config = {
   // Redis
   redisUrl:      requireEnv('REDIS_URL'),
 
-  // Mini App
+  // Mini App (Vercel URL — регистрируется в business.max.ru)
   miniAppUrl:    optionalEnv('MINI_APP_URL', ''),
+  // URL бота в MAX — используется в поле web_app кнопки open_app
+  maxBotUrl:     optionalEnv('MAX_BOT_URL', ''),
 
   // Порты сервисов
   botPort:       parseInt(optionalEnv('BOT_PORT', '3000'), 10),

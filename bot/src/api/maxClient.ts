@@ -145,13 +145,16 @@ export async function answerCallback(callbackId: string, text?: string): Promise
 // Собрать inline-кнопку «💬 Комментарии» для прикрепления к посту
 export function buildCommentsButton(postId: number, count: number): unknown {
   const label = count === 0 ? '💬 Комментарии' : `💬 Комментарии (${count})`;
+  // web_app — URL бота в MAX (https://max.ru/botname), НЕ Vercel URL.
+  // MAX ищет это значение в своём реестре ссылок (space=TAMTAM).
+  // Vercel URL регистрируется в business.max.ru и открывается автоматически.
   return {
     type: 'inline_keyboard',
     payload: {
       buttons: [[{
         type: 'open_app',
         text: label,
-        web_app: config.miniAppUrl,      // URL мини-приложения
+        web_app: config.maxBotUrl,       // https://max.ru/id861708697380_bot
         payload: `post_${postId}`,        // стартовый параметр (max 512 символов)
       }]],
     },
