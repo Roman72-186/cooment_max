@@ -3,6 +3,9 @@ import express from 'express';
 import { commentsRouter } from './routes/comments.js';
 import { postsRouter } from './routes/posts.js';
 import { reactionsRouter } from './routes/reactions.js';
+import { userRouter } from './routes/user.js';
+import { channelsRouter } from './routes/channels.js';
+import { paymentsRouter } from './routes/payments.js';
 
 const app = express();
 app.use(express.json());
@@ -28,6 +31,9 @@ app.get('/health', (_req, res) => {
 app.use('/api/comments', commentsRouter);
 app.use('/api/posts', postsRouter);
 app.use('/api/reactions', reactionsRouter);
+app.use('/api/user', userRouter);
+app.use('/api/channels', channelsRouter);
+app.use('/api/payments', paymentsRouter);
 
 // 404 для неизвестных маршрутов
 app.use((_req, res) => {

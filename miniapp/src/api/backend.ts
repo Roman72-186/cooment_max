@@ -87,3 +87,77 @@ export async function getPost(postId: number): Promise<Post | null> {
     return null;
   }
 }
+
+// ─── ПОЛЬЗОВАТЕЛЬ ────────────────────────────────────────────────
+
+export interface ChannelSummary {
+  id: number;
+  max_chat_id: string;
+  channel_name: string | null;
+  is_active: boolean;
+  post_count: number;
+  total_comments: number;
+  comments_enabled: boolean;
+  banned_words: string[];
+  connected_at: string;
+}
+
+export interface UserMe {
+  id: number;
+  max_user_id: number;
+  name: string | null;
+  username: string | null;
+  plan: 'free' | 'pro';
+  plan_expires: string | null;
+  ref_code: string | null;
+  channels: ChannelSummary[];
+}
+
+export async function getUserMe(): Promise<UserMe> {
+  const { data } = await api.get<UserMe>('/api/user/me');
+  return data;
+}
+
+// ─── КАНАЛЫ ──────────────────────────────────────────────────────
+
+export interface AnalyticsDayData {
+  date: string;
+  views: number;
+  comments: number;
+  reactions: number;
+}
+
+export interface PostSummary {
+  id: number;
+  text_preview: string | null;
+  comment_count: number;
+  published_at: string;
+}
+
+export interface AnalyticsSummary {
+  days: AnalyticsDayData[];
+  top_posts: PostSummary[];
+  total_views: number;
+  total_comments: number;
+  total_reactions: number;
+  engagement_rate: number;
+}
+
+export async function getChannelAnalytics(
+  channelId: number,
+  days: 7 | 30 | 90 = 7
+): Promise<AnalyticsSummary> {
+  const { data } = await api.get<AnalyticsSummary>(
+    `/api/channels/${channelId}/analytics`,
+    { params: { days } }
+  );
+  return data;
+}
+
+export async function updateChannelSettings(
+  channelId: number,
+  settings: { comments_enabled?: boolean; banned_words?: string[] }
+): Promise<{ id: number; comments_enabled: boolean; banned_words: string[] }> {
+  const { data } = await api.patch(`/api/channels/${channelId}/settings`, settings);
+  return data;
+}

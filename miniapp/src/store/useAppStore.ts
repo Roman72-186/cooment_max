@@ -1,15 +1,33 @@
 // Глобальное состояние приложения (Zustand)
 import { create } from 'zustand';
-import type { Comment } from '../api/backend';
+import type { Comment, UserMe, ChannelSummary } from '../api/backend';
+
+// Страницы приложения
+export type Page =
+  | { id: 'loading' }
+  | { id: 'comments'; postId: number }
+  | { id: 'onboarding' }
+  | { id: 'dashboard' }
+  | { id: 'analytics'; channelId: number }
+  | { id: 'settings'; channelId: number }
+  | { id: 'pricing' };
 
 interface AppState {
-  postId: number | null;
+  // Навигация
+  page: Page;
+  setPage: (page: Page) => void;
+
+  // Данные пользователя (загружаются при старте)
+  user: UserMe | null;
+  setUser: (user: UserMe | null) => void;
+  updateChannel: (updated: Partial<ChannelSummary> & { id: number }) => void;
+
+  // Комментарии (CommentsPage)
   comments: Comment[];
   loading: boolean;
   error: string | null;
-  replyTo: Comment | null;  // комментарий, на который отвечаем
+  replyTo: Comment | null;
 
-  setPostId: (id: number) => void;
   setComments: (comments: Comment[]) => void;
   addComment: (comment: Comment) => void;
   setLoading: (loading: boolean) => void;
@@ -18,13 +36,31 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
-  postId: null,
+  // Навигация
+  page: { id: 'loading' },
+  setPage: (page) => set({ page }),
+
+  // Пользователь
+  user: null,
+  setUser: (user) => set({ user }),
+  updateChannel: (updated) =>
+    set((state) => ({
+      user: state.user
+        ? {
+            ...state.user,
+            channels: state.user.channels.map((ch) =>
+              ch.id === updated.id ? { ...ch, ...updated } : ch
+            ),
+          }
+        : null,
+    })),
+
+  // Комментарии
   comments: [],
   loading: false,
   error: null,
   replyTo: null,
 
-  setPostId: (id) => set({ postId: id }),
   setComments: (comments) => set({ comments }),
   addComment: (comment) =>
     set((state) => ({ comments: [comment, ...state.comments] })),

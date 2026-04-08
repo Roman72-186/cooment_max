@@ -25,6 +25,45 @@ export interface Channel {
   post_count: number;
   total_comments: number;
   connected_at: string;
+  comments_enabled: boolean;         // вкл/выкл комментарии на канале
+  banned_words: string[];            // список стоп-слов (PRO)
+}
+
+// Краткая сводка канала для списка на Dashboard
+export interface ChannelSummary {
+  id: number;
+  max_chat_id: string;
+  channel_name: string | null;
+  is_active: boolean;
+  post_count: number;
+  total_comments: number;
+  comments_enabled: boolean;
+  connected_at: string;
+}
+
+// Пользователь с каналами — ответ GET /api/user/me
+export interface UserWithChannels extends User {
+  channels: ChannelSummary[];
+}
+
+// ─── АНАЛИТИКА ───────────────────────────────────────────────────
+
+// Краткая сводка поста для топ-5
+export interface PostSummary {
+  id: number;
+  text_preview: string | null;
+  comment_count: number;
+  published_at: string;
+}
+
+// Ответ GET /api/channels/:id/analytics
+export interface AnalyticsSummary {
+  days: AnalyticsDaily[];        // данные по дням
+  top_posts: PostSummary[];      // топ-5 постов по комментариям
+  total_views: number;
+  total_comments: number;
+  total_reactions: number;
+  engagement_rate: number;       // (comments + reactions) / views * 100
 }
 
 // ─── ПОСТ ────────────────────────────────────────────────────────
