@@ -1,8 +1,7 @@
-// Интеграция с ЮКасса
-// POST /api/payments/create         — создать платёж (SBP/QR, сохранить метод для рекуррента)
-// POST /api/payments/webhook        — вебхук от ЮКасса (без авторизации)
-// POST /api/payments/cancel-renewal — отключить авторекуррент
-// GET  /api/payments/status         — статус подписки текущего пользователя
+// Интеграция с T-Bank Acquiring API v2
+// POST /api/payments/create   — создать платёж (редирект на страницу T-Bank)
+// POST /api/payments/webhook  — вебхук от T-Bank (без авторизации, проверка токена)
+// GET  /api/payments/status   — статус подписки текущего пользователя
 
 import { Router, type Request } from 'express';
 import { pool } from '../db/db.js';
@@ -11,71 +10,44 @@ import crypto from 'crypto';
 
 export const paymentsRouter = Router();
 
-const YOOKASSA_BASE = 'https://api.yookassa.ru/v3';
-const PRO_PRICE    = process.env.PRO_PRICE_RUB ?? '299.00';
-const PRO_DAYS     = 30;
+const TBANK_API  = 'https://securepay.tinkoff.ru/v2';
+const PRO_PRICE  = parseInt(process.env.PRO_PRICE_RUB ?? '299', 10);  // рубли
+const PRO_DAYS   = 30;
 
-// IP-адреса серверов ЮКасса (whitelist для webhook)
-const YOOKASSA_IPS = new Set([
-  '185.71.76.0', '185.71.77.0', '77.75.153.0', '77.75.154.128',
-  '77.75.156.11', '77.75.156.35',
-]);
+// ─── Подпись запроса ────────────────────────────────────────────
+// Алгоритм T-Bank: взять все поля (+ Password), отсортировать по ключу,
+// склеить значения, взять SHA-256
 
-// ─── Хелперы ────────────────────────────────────────────────────
+function generateToken(params: Record<string, unknown>): string {
+  const password = process.env.TBANK_PASSWORD;
+  if (!password) throw new Error('TBANK_PASSWORD не задан');
 
-function getYookassaAuth(): string {
-  const shopId = process.env.YOOKASSA_SHOP_ID;
-  const secret = process.env.YOOKASSA_SECRET;
-  if (!shopId || !secret) throw new Error('YOOKASSA_SHOP_ID или YOOKASSA_SECRET не заданы');
-  return `Basic ${Buffer.from(`${shopId}:${secret}`).toString('base64')}`;
+  const data: Record<string, unknown> = { ...params, Password: password };
+  const keys = Object.keys(data)
+    .filter(k => typeof data[k] !== 'object' && !Array.isArray(data[k]))
+    .sort();
+  const concatenated = keys.map(k => String(data[k])).join('');
+  return crypto.createHash('sha256').update(concatenated).digest('hex');
 }
 
-async function yookassaRequest<T>(
-  method: 'GET' | 'POST',
-  path: string,
-  body?: unknown,
-  idempotencyKey?: string
-): Promise<T> {
-  const headers: Record<string, string> = {
-    'Authorization':   getYookassaAuth(),
-    'Content-Type':    'application/json',
-  };
-  if (idempotencyKey) headers['Idempotence-Key'] = idempotencyKey;
+function getTerminalKey(): string {
+  const key = process.env.TBANK_TERMINAL_KEY;
+  if (!key) throw new Error('TBANK_TERMINAL_KEY не задан');
+  return key;
+}
 
-  const res = await fetch(`${YOOKASSA_BASE}${path}`, {
-    method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+async function tbankRequest<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const payload = { ...body, Token: generateToken(body) };
+  const res = await fetch(`${TBANK_API}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
   });
-
-  const data = await res.json() as T;
-  if (!res.ok) {
-    throw new Error(`ЮКасса ${method} ${path} → ${res.status}: ${JSON.stringify(data)}`);
+  const data = await res.json() as T & { Success?: boolean; Message?: string };
+  if (!res.ok || data.Success === false) {
+    throw new Error(`T-Bank ${path} → ${res.status}: ${data.Message ?? JSON.stringify(data)}`);
   }
   return data;
-}
-
-// Проверка IP из whitelist ЮКасса (CIDR упрощённо — проверяем подсети /27 и /25)
-function isYookassaIp(ip: string): boolean {
-  // Точные адреса
-  if (YOOKASSA_IPS.has(ip)) return true;
-  // 185.71.76.0/27 → 185.71.76.0 – 185.71.76.31
-  if (ip.startsWith('185.71.76.') && parseInt(ip.split('.')[3]) <= 31) return true;
-  // 185.71.77.0/27 → 185.71.77.0 – 185.71.77.31
-  if (ip.startsWith('185.71.77.') && parseInt(ip.split('.')[3]) <= 31) return true;
-  // 77.75.153.0/25 → 77.75.153.0 – 77.75.153.127
-  if (ip.startsWith('77.75.153.') && parseInt(ip.split('.')[3]) <= 127) return true;
-  // 77.75.154.128/25 → 77.75.154.128 – 77.75.154.255
-  if (ip.startsWith('77.75.154.') && parseInt(ip.split('.')[3]) >= 128) return true;
-  return false;
-}
-
-function getClientIp(req: Request): string {
-  return (
-    (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ??
-    req.socket.remoteAddress ??
-    ''
-  );
 }
 
 // ─── POST /api/payments/create ──────────────────────────────────
@@ -84,69 +56,56 @@ paymentsRouter.post('/create', requireAuth, async (req, res) => {
   const maxUser = req.maxUser!;
 
   try {
-    getYookassaAuth(); // бросит если ключей нет
+    getTerminalKey(); // бросит если ключа нет
   } catch {
     res.status(503).json({ error: 'Платежи временно недоступны', coming_soon: true });
     return;
   }
 
   try {
-    // DB id пользователя
     const { rows } = await pool.query(
-      'SELECT id, payment_method_id FROM users WHERE max_user_id = $1',
+      'SELECT id FROM users WHERE max_user_id = $1',
       [maxUser.user_id]
     );
-    if (!rows[0]) {
-      res.status(404).json({ error: 'Пользователь не найден' });
-      return;
-    }
-    const { id: userId } = rows[0];
+    if (!rows[0]) { res.status(404).json({ error: 'Пользователь не найден' }); return; }
+    const userId: number = rows[0].id;
 
-    // Idempotency key — предотвращает дубли при retry
-    const idempotencyKey = crypto.randomUUID();
-
-    const returnUrl = process.env.MINI_APP_URL ?? 'https://sushi-house-39.online';
-
-    // Платёж через SBP (QR-код)
-    // save_payment_method: true — сохраняем метод для авторекуррента
-    const payment = await yookassaRequest<{
-      id: string;
-      status: string;
-      confirmation: { type: string; confirmation_url?: string; qr_code_url?: string };
-      payment_method?: { id: string; type: string; saved: boolean };
-    }>(
-      'POST',
-      '/payments',
-      {
-        amount:      { value: PRO_PRICE, currency: 'RUB' },
-        payment_method_data: { type: 'sbp' },
-        confirmation: {
-          type:       'redirect',
-          return_url: returnUrl,
-        },
-        capture:              true,
-        save_payment_method:  true,
-        description:          `PRO подписка на ${PRO_DAYS} дней — MAX Comments`,
-        metadata: {
-          user_id: String(userId),
-          plan:    'pro',
-        },
-      },
-      idempotencyKey
+    // Создаём запись платежа в БД
+    const { rows: payRows } = await pool.query(
+      `INSERT INTO payments (user_id, amount_rub, plan, status)
+       VALUES ($1, $2, 'pro', 'pending')
+       RETURNING id`,
+      [userId, PRO_PRICE]
     );
+    const paymentId: number = payRows[0].id;
 
-    // Сохраняем платёж в БД со статусом pending
+    const miniAppUrl = process.env.MINI_APP_URL ?? 'https://sushi-house-39.online';
+
+    const reqBody = {
+      TerminalKey:     getTerminalKey(),
+      Amount:          PRO_PRICE * 100,                       // копейки
+      OrderId:         String(paymentId),
+      Description:     `PRO подписка на ${PRO_DAYS} дней — Комментарии в ПОСТ`,
+      NotificationURL: `${miniAppUrl}/api/payments/webhook`,
+      SuccessURL:      `${miniAppUrl}/?payment=success`,
+      FailURL:         `${miniAppUrl}/?payment=fail`,
+    };
+
+    const result = await tbankRequest<{
+      Success: boolean;
+      PaymentURL: string;
+      PaymentId: string;
+    }>('/Init', reqBody);
+
+    // Сохраняем внешний ID платежа
     await pool.query(
-      `INSERT INTO payments (user_id, yookassa_id, amount_rub, plan, status, is_recurring)
-       VALUES ($1, $2, $3, 'pro', 'pending', false)
-       ON CONFLICT DO NOTHING`,
-      [userId, payment.id, parseFloat(PRO_PRICE)]
+      'UPDATE payments SET tbank_payment_id = $1 WHERE id = $2',
+      [result.PaymentId, paymentId]
     );
 
     res.json({
-      payment_id:       payment.id,
-      status:           payment.status,
-      confirmation_url: payment.confirmation.confirmation_url,  // URL для SBP редиректа
+      payment_id:   paymentId,
+      payment_url:  result.PaymentURL,
     });
   } catch (err) {
     console.error('POST /api/payments/create error:', err);
@@ -155,102 +114,106 @@ paymentsRouter.post('/create', requireAuth, async (req, res) => {
 });
 
 // ─── POST /api/payments/webhook ─────────────────────────────────
-// Вызывается ЮКасса при изменении статуса платежа
-// Верификация: проверяем IP источника (whitelist ЮКасса)
+// T-Bank присылает JSON с полем Token — верифицируем подписью
 
 paymentsRouter.post('/webhook', async (req, res) => {
-  // Проверяем IP — принимаем только от серверов ЮКасса
-  const clientIp = getClientIp(req);
-  if (!isYookassaIp(clientIp)) {
-    // В dev-режиме пропускаем проверку
-    if (process.env.NODE_ENV !== 'development') {
-      console.warn(`Webhook от неизвестного IP: ${clientIp}`);
-      res.sendStatus(200); // 200 чтобы ЮКасса не ретраила, но игнорируем
+  // T-Bank ожидает строку 'OK' в теле при успехе
+  const body = req.body as Record<string, unknown>;
+
+  // Верификация подписи
+  try {
+    const { Token: receivedToken, ...rest } = body;
+    const expectedToken = generateToken(rest);
+    if (receivedToken !== expectedToken) {
+      console.warn('T-Bank webhook: неверная подпись');
+      res.status(403).send('FAIL');
       return;
     }
+  } catch (err) {
+    console.error('T-Bank webhook: ошибка верификации', err);
+    res.status(500).send('FAIL');
+    return;
   }
 
-  // ЮКасса требует 200 даже при ошибках — иначе будет ретраить
-  res.sendStatus(200);
+  // Всегда отвечаем OK — T-Bank будет ретраить если не получит
+  res.send('OK');
 
   try {
-    const event = req.body as {
-      type:   string;
-      object: {
-        id:     string;
-        status: string;
-        metadata?:       { user_id?: string; plan?: string };
-        payment_method?: { id: string; type: string; saved: boolean };
-      };
-    };
+    const status     = String(body.Status ?? '');
+    const orderId    = body.OrderId ? String(body.OrderId) : null;
+    const tbankPayId = body.PaymentId ? String(body.PaymentId) : null;
+    const amount     = body.Amount ? Math.round(Number(body.Amount) / 100) : 0; // копейки → рубли
 
-    console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: 'ЮКасса webhook', type: event.type, objectId: event.object?.id }));
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(), level: 'info',
+      msg: 'T-Bank webhook', status, orderId, tbankPayId, amount,
+    }));
 
-    if (event.type === 'payment.succeeded') {
-      const { id: yookassaId, metadata, payment_method } = event.object;
-      const userId = metadata?.user_id ? parseInt(metadata.user_id, 10) : null;
-      if (!userId) return;
+    if (status === 'CONFIRMED' && orderId) {
+      // Проверяем идемпотентность
+      const { rows } = await pool.query(
+        'SELECT id, user_id, status FROM payments WHERE id = $1',
+        [parseInt(orderId, 10)]
+      );
+      if (!rows[0] || rows[0].status === 'succeeded') return;
+
+      const { id: payId, user_id: userId } = rows[0];
 
       // Обновляем статус платежа
       await pool.query(
-        `UPDATE payments SET status = 'succeeded', payment_method_id = $2
-         WHERE yookassa_id = $1`,
-        [yookassaId, payment_method?.id ?? null]
+        `UPDATE payments SET status = 'succeeded', tbank_payment_id = $2 WHERE id = $1`,
+        [payId, tbankPayId]
       );
 
-      // Выдаём PRO: продлеваем от текущего истечения (если уже PRO) или от сейчас
-      await pool.query(
-        `UPDATE users
-            SET plan             = 'pro',
-                plan_expires     = COALESCE(
-                  CASE WHEN plan_expires > NOW() THEN plan_expires ELSE NOW() END,
-                  NOW()
-                ) + INTERVAL '${PRO_DAYS} days',
-                payment_method_id = COALESCE($2, payment_method_id)
-          WHERE id = $1`,
-        [userId, payment_method?.saved ? payment_method.id : null]
-      );
-
-      // Бонус рефереру: +30 дней PRO
+      // Выдаём PRO
       await pool.query(
         `UPDATE users
             SET plan         = 'pro',
-                plan_expires = COALESCE(
-                  CASE WHEN plan_expires > NOW() THEN plan_expires ELSE NOW() END,
-                  NOW()
-                ) + INTERVAL '30 days'
-          WHERE id = (SELECT referred_by FROM users WHERE id = $1)`,
+                plan_expires = GREATEST(COALESCE(plan_expires, NOW()), NOW())
+                              + INTERVAL '${PRO_DAYS} days'
+          WHERE id = $1`,
         [userId]
       );
 
-      console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'info', msg: 'PRO выдан', userId, yookassaId }));
+      // Бонус рефереру: +30 дней PRO + уведомление в MAX
+      const { rows: refRows } = await pool.query(
+        `UPDATE users
+            SET plan         = 'pro',
+                plan_expires = GREATEST(COALESCE(plan_expires, NOW()), NOW())
+                              + INTERVAL '30 days'
+          WHERE id = (SELECT referred_by FROM users WHERE id = $1)
+          RETURNING max_user_id`,
+        [userId]
+      );
+
+      if (refRows[0]?.max_user_id) {
+        const botToken = process.env.MAX_BOT_TOKEN;
+        if (botToken) {
+          fetch(`https://platform-api.max.ru/messages?user_id=${refRows[0].max_user_id}`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${botToken}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: '🎉 По вашей реферальной ссылке оформили **PRO**!\n\n+30 дней начислено на ваш аккаунт.',
+              format: 'markdown',
+            }),
+          }).catch(e => console.error('Ошибка отправки уведомления рефереру:', e));
+        }
+      }
+
+      console.log(JSON.stringify({
+        ts: new Date().toISOString(), level: 'info',
+        msg: 'PRO выдан (T-Bank)', userId, payId,
+      }));
     }
 
-    if (event.type === 'payment.canceled') {
-      const { id: yookassaId } = event.object;
+    if (status === 'CANCELED' && orderId) {
       await pool.query(
-        `UPDATE payments SET status = 'canceled' WHERE yookassa_id = $1`,
-        [yookassaId]
+        `UPDATE payments SET status = 'cancelled' WHERE id = $1`,
+        [parseInt(orderId, 10)]
       );
     }
   } catch (err) {
-    console.error('Ошибка обработки webhook ЮКасса:', err);
-  }
-});
-
-// ─── POST /api/payments/cancel-renewal ──────────────────────────
-
-paymentsRouter.post('/cancel-renewal', requireAuth, async (req, res) => {
-  const maxUser = req.maxUser!;
-  try {
-    await pool.query(
-      `UPDATE users SET auto_renew = false WHERE max_user_id = $1`,
-      [maxUser.user_id]
-    );
-    res.json({ auto_renew: false });
-  } catch (err) {
-    console.error('POST /api/payments/cancel-renewal error:', err);
-    res.status(500).json({ error: 'Ошибка сервера' });
+    console.error('Ошибка обработки T-Bank webhook:', err);
   }
 });
 
@@ -260,8 +223,7 @@ paymentsRouter.get('/status', requireAuth, async (req, res) => {
   const maxUser = req.maxUser!;
   try {
     const { rows } = await pool.query(
-      `SELECT plan, plan_expires, auto_renew,
-              payment_method_id IS NOT NULL AS has_payment_method
+      `SELECT plan, plan_expires
          FROM users WHERE max_user_id = $1`,
       [maxUser.user_id]
     );
@@ -269,11 +231,9 @@ paymentsRouter.get('/status', requireAuth, async (req, res) => {
 
     const u = rows[0];
     res.json({
-      plan:               u.plan,
-      plan_expires:       u.plan_expires,
-      auto_renew:         u.auto_renew,
-      has_payment_method: u.has_payment_method,
-      is_active:          u.plan === 'pro' && (!u.plan_expires || new Date(u.plan_expires) > new Date()),
+      plan:        u.plan,
+      plan_expires: u.plan_expires,
+      is_active:   u.plan === 'pro' && (!u.plan_expires || new Date(u.plan_expires) > new Date()),
     });
   } catch (err) {
     res.status(500).json({ error: 'Ошибка сервера' });

@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 #!/usr/bin/env python3
+import sys, io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 """
 Полный E2E тест MAX Comments Platform
 Тестирует ВСЕ backend-роуты: старые + новые (шаги 16-20)
@@ -7,7 +9,7 @@
 import hashlib, hmac, json, time, urllib.parse, requests
 
 BASE = "https://sushi-house-39.online"
-BOT_TOKEN = "f9LHodD0cOJ_2SMLR6oib8a3JePm4L5RBKwzGbTIE8SKhldrH1bxgPorQJ-YjvJlt6inCG1cAYrtFo6wLMWq"
+BOT_TOKEN = "f9LHodD0cOIA7wYc2NwzLlBlNOBZ5NUJhiU920_3c89qSuNSIXYMFnM_IAtZ85GAhZpKHg-yyG43AB9zX_Nm"
 
 # Пользователи для тестов
 OWNER_MAX_ID  = 165984019   # владелец канала (db: users.id=89)

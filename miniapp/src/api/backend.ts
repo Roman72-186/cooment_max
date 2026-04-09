@@ -110,6 +110,7 @@ export interface UserMe {
   plan: 'free' | 'pro';
   plan_expires: string | null;
   ref_code: string | null;
+  is_admin: boolean;
   channels: ChannelSummary[];
 }
 
@@ -154,10 +155,86 @@ export async function getChannelAnalytics(
   return data;
 }
 
+export async function syncChannels(): Promise<{ registered: number; channels: ChannelSummary[] }> {
+  const { data } = await api.post('/api/channels/sync');
+  return data;
+}
+
 export async function updateChannelSettings(
   channelId: number,
   settings: { comments_enabled?: boolean; banned_words?: string[] }
 ): Promise<{ id: number; comments_enabled: boolean; banned_words: string[] }> {
   const { data } = await api.patch(`/api/channels/${channelId}/settings`, settings);
   return data;
+}
+
+export async function createPayment(): Promise<{ payment_url: string; payment_id: number }> {
+  const { data } = await api.post('/api/payments/create');
+  return data;
+}
+
+export async function getReferralStats(): Promise<{
+  invited: number;
+  converted: number;
+  days_earned: number;
+  ref_link: string | null;
+}> {
+  const { data } = await api.get('/api/referrals/stats');
+  return data;
+}
+
+// ─── ADMIN ────────────────────────────────────────────────────────
+
+export interface AdminUser {
+  id: number;
+  max_user_id: number;
+  name: string | null;
+  username: string | null;
+  plan: 'free' | 'pro';
+  plan_expires: string | null;
+  is_admin: boolean;
+  created_at: string;
+  channel_count: number;
+}
+
+export interface AdminChannel {
+  id: number;
+  max_chat_id: string;
+  channel_name: string | null;
+  is_active: boolean;
+  post_count: number;
+  total_comments: number;
+  comments_enabled: boolean;
+  connected_at: string;
+  owner_name: string | null;
+  owner_max_id: number | null;
+}
+
+export async function adminGetUsers(): Promise<AdminUser[]> {
+  const { data } = await api.get('/api/admin/users');
+  return data;
+}
+
+export async function adminGetChannels(): Promise<AdminChannel[]> {
+  const { data } = await api.get('/api/admin/channels');
+  return data;
+}
+
+export async function adminUpdateUser(
+  userId: number,
+  payload: { plan: 'free' | 'pro'; days?: number }
+): Promise<void> {
+  await api.patch(`/api/admin/users/${userId}`, payload);
+}
+
+export async function adminDeleteUser(userId: number): Promise<void> {
+  await api.delete(`/api/admin/users/${userId}`);
+}
+
+export async function adminToggleChannel(channelId: number, isActive: boolean): Promise<void> {
+  await api.patch(`/api/admin/channels/${channelId}`, { is_active: isActive });
+}
+
+export async function adminDeleteChannel(channelId: number): Promise<void> {
+  await api.delete(`/api/admin/channels/${channelId}`);
 }

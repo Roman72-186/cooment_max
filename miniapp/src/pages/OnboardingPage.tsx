@@ -1,6 +1,6 @@
 // Онбординг — мастер подключения канала для владельца
 import { useState, useCallback } from 'react';
-import { getUserMe } from '../api/backend';
+import { getUserMe, syncChannels } from '../api/backend';
 import { useAppStore } from '../store/useAppStore';
 
 type Step = 'welcome' | 'instruction' | 'checking' | 'success';
@@ -16,6 +16,8 @@ export function OnboardingPage() {
     setChecking(true);
     setNotFound(false);
     try {
+      // Синхронизируем каналы с MAX API, потом проверяем
+      await syncChannels();
       const user = await getUserMe();
       setUser(user);
       if (user.channels.length > 0) {
@@ -55,6 +57,15 @@ export function OnboardingPage() {
             <button className="btn btn--primary" onClick={() => setStep('instruction')}>
               Подключить канал
             </button>
+            <div className="onboarding__legal">
+              <span onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/offer')}>
+                Оферта
+              </span>
+              {' · '}
+              <span onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/privacy')}>
+                Политика ПДн
+              </span>
+            </div>
           </>
         )}
 
@@ -63,9 +74,18 @@ export function OnboardingPage() {
             <div className="onboarding__icon">📋</div>
             <h2 className="onboarding__title">Как подключить</h2>
             <ol className="onboarding__steps">
-              <li>Откройте настройки вашего канала в MAX</li>
-              <li>Перейдите в раздел <strong>Администраторы</strong></li>
-              <li>Добавьте <strong>@MaxCommentsBot</strong> как администратора</li>
+              <li>Откройте бота и нажмите <strong>«Начать»</strong>:
+                <div className="onboarding__bot-link">
+                  <button
+                    className="btn btn--ghost btn--xs"
+                    onClick={() => (window as any).WebApp?.openLink('https://max.ru/id861708697380_2_bot')}
+                  >
+                    Открыть бота
+                  </button>
+                </div>
+              </li>
+              <li>Откройте настройки вашего канала → <strong>Администраторы</strong></li>
+              <li>Добавьте бот как администратора</li>
               <li>Выдайте права: <em>читать, публиковать, редактировать</em></li>
               <li>Нажмите «Проверить» ниже</li>
             </ol>

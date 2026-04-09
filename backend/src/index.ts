@@ -6,6 +6,8 @@ import { reactionsRouter } from './routes/reactions.js';
 import { userRouter } from './routes/user.js';
 import { channelsRouter } from './routes/channels.js';
 import { paymentsRouter } from './routes/payments.js';
+import { adminRouter } from './routes/admin.js';
+import { referralsRouter } from './routes/referrals.js';
 import { startAutoRenewJob } from './jobs/autoRenew.js';
 
 const app = express();
@@ -35,6 +37,8 @@ app.use('/api/reactions', reactionsRouter);
 app.use('/api/user', userRouter);
 app.use('/api/channels', channelsRouter);
 app.use('/api/payments', paymentsRouter);
+app.use('/api/admin', adminRouter);
+app.use('/api/referrals', referralsRouter);
 
 // 404 для неизвестных маршрутов
 app.use((_req, res) => {

@@ -9,6 +9,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PricingPage } from './pages/PricingPage';
+import { AdminPage } from './pages/AdminPage';
 
 export function App() {
   const { page, setPage, setUser } = useAppStore();
@@ -51,6 +52,12 @@ export function App() {
           return;
         }
 
+        // Администратор — сразу в панель управления
+        if (user.is_admin) {
+          setPage({ id: 'admin' });
+          return;
+        }
+
         // Нет каналов — онбординг; есть — дашборд
         if (user.channels.length === 0) {
           setPage({ id: 'onboarding' });
@@ -85,6 +92,7 @@ export function App() {
       showFooter = false;
       break;
 
+    case 'admin':       content = <AdminPage />;                            break;
     case 'onboarding':  content = <OnboardingPage />;                      break;
     case 'dashboard':   content = <DashboardPage />;                       break;
     case 'analytics':   content = <AnalyticsPage channelId={page.channelId} />; break;
@@ -97,23 +105,19 @@ export function App() {
       {content}
       {showFooter && (
         <footer style={{ padding: '12px 16px 20px', textAlign: 'center', fontSize: '12px', color: '#aaa' }}>
-          <a
-            href="https://sushi-house-39.online/legal/offer"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: '#aaa' }}
+          <span
+            style={{ color: '#aaa', cursor: 'pointer', textDecoration: 'underline' }}
+            onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/offer')}
           >
             Оферта
-          </a>
+          </span>
           {' · '}
-          <a
-            href="https://sushi-house-39.online/legal/privacy"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: '#aaa' }}
+          <span
+            style={{ color: '#aaa', cursor: 'pointer', textDecoration: 'underline' }}
+            onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/privacy')}
           >
             Политика ПДн
-          </a>
+          </span>
         </footer>
       )}
     </>

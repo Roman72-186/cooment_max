@@ -1,8 +1,12 @@
-// GET  /api/channels/:id/analytics — аналитика канала
+// GET  /api/channels/:id/analytics  — аналитика канала
 // PATCH /api/channels/:id/settings  — настройки канала
+// POST /api/channels/sync           — найти каналы где бот-админ и зарегистрировать их
 import { Router } from 'express';
 import { pool } from '../db/db.js';
 import { requireAuth } from '../middleware/auth.js';
+
+const MAX_API = 'https://platform-api.max.ru';
+const BOT_TOKEN = process.env.MAX_BOT_TOKEN ?? '';
 
 export const channelsRouter = Router();
 
@@ -30,6 +34,97 @@ async function getOwnedChannel(
   if (!rows[0]) return 'forbidden';
   return rows[0];
 }
+
+// ─── POST /api/channels/sync ─────────────────────────────────────
+// Опрашивает MAX API — в каких каналах состоит бот.
+// Для каждого незарегистрированного канала проверяет через
+// GET /chats/{id}/members/admins — есть ли там запрашивающий пользователь.
+// Регистрирует только те каналы, где пользователь подтверждён как администратор.
+channelsRouter.post('/sync', requireAuth, async (req, res) => {
+  const maxUser = req.maxUser!;
+
+  try {
+    // 1. Получаем пользователя из БД
+    const { rows: userRows } = await pool.query(
+      'SELECT id FROM users WHERE max_user_id = $1',
+      [maxUser.user_id]
+    );
+    if (!userRows[0]) {
+      res.status(404).json({ error: 'Пользователь не найден' });
+      return;
+    }
+    const userId = Number(userRows[0].id);
+
+    // 2. Запрашиваем список всех чатов бота
+    const maxResp = await fetch(`${MAX_API}/chats?count=100`, {
+      headers: { Authorization: BOT_TOKEN },
+    });
+    if (!maxResp.ok) {
+      res.status(502).json({ error: 'Ошибка запроса к MAX API' });
+      return;
+    }
+    const maxData = await maxResp.json() as {
+      chats?: Array<{ chat_id: string | number; type: string; title?: string }>;
+    };
+    const channelChats = (maxData.chats ?? []).filter(c => c.type === 'channel');
+
+    // 3. Для каждого канала проверяем:
+    //    а) его нет в БД
+    //    б) запрашивающий пользователь есть в списке администраторов
+    let registered = 0;
+    for (const ch of channelChats) {
+      const chatId = String(ch.chat_id);
+
+      // Пропускаем уже зарегистрированные каналы
+      const { rows: existing } = await pool.query(
+        'SELECT id FROM channels WHERE max_chat_id = $1',
+        [chatId]
+      );
+      if (existing.length > 0) continue;
+
+      // Проверяем администраторов канала
+      let isAdmin = false;
+      try {
+        const adminsResp = await fetch(`${MAX_API}/chats/${chatId}/members/admins`, {
+          headers: { Authorization: BOT_TOKEN },
+        });
+        if (adminsResp.ok) {
+          const adminsData = await adminsResp.json() as {
+            members?: Array<{ user_id: number; is_owner?: boolean; role?: string }>;
+          };
+          const members = adminsData.members ?? [];
+          isAdmin = members.some(m => m.user_id === maxUser.user_id);
+        }
+      } catch {
+        // Не удалось получить список администраторов — пропускаем канал
+      }
+
+      if (!isAdmin) continue;
+
+      // Регистрируем канал под текущим пользователем
+      await pool.query(
+        `INSERT INTO channels (max_chat_id, channel_name, owner_id, is_active, comments_enabled)
+         VALUES ($1, $2, $3, true, true)
+         ON CONFLICT (max_chat_id) DO NOTHING`,
+        [chatId, ch.title ?? chatId, userId]
+      );
+      registered++;
+    }
+
+    // 4. Возвращаем обновлённый список каналов пользователя
+    const { rows: userChannels } = await pool.query(
+      `SELECT id, max_chat_id, channel_name, is_active, post_count,
+              total_comments, comments_enabled, banned_words, connected_at
+         FROM channels WHERE owner_id = $1 ORDER BY connected_at DESC`,
+      [userId]
+    );
+
+    res.json({ registered, channels: userChannels });
+  } catch (err) {
+    console.error('POST /api/channels/sync error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
 
 // ─── GET /api/channels/:id/analytics?days=7 ──────────────────────
 channelsRouter.get('/:id/analytics', requireAuth, async (req, res) => {

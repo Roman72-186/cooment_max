@@ -1,5 +1,7 @@
-// Страница тарифов — FREE vs PRO, кнопка оплаты (архитектура готова)
+// Страница тарифов — FREE vs PRO, кнопка оплаты T-Bank
+import { useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
+import { createPayment } from '../api/backend';
 
 const FREE_FEATURES = [
   'Комментарии на каналах',
@@ -19,6 +21,28 @@ const PRO_FEATURES = [
 
 export function PricingPage() {
   const { user, setPage } = useAppStore();
+  const [paying, setPaying] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
+
+  const handlePay = async () => {
+    setPaying(true);
+    setPayError(null);
+    try {
+      const { payment_url } = await createPayment();
+      // Открываем страницу T-Bank через MAX Bridge или браузер
+      const tg = (window as any).WebApp;
+      if (tg?.openLink) {
+        tg.openLink(payment_url);
+      } else {
+        window.location.href = payment_url;
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.error ?? 'Ошибка при создании платежа';
+      setPayError(msg);
+    } finally {
+      setPaying(false);
+    }
+  };
 
   const isPro = user?.plan === 'pro' &&
     (!user.plan_expires || new Date(user.plan_expires) > new Date());
@@ -83,15 +107,20 @@ export function PricingPage() {
                 {planExpiresStr && ` до ${planExpiresStr}`}
               </div>
             ) : (
-              <button
-                className="btn btn--primary"
-                onClick={() => {
-                  // TODO: подключить ЮКасса — POST /api/payments/create
-                  alert('Оплата откроется в ближайшее время');
-                }}
-              >
-                Оформить PRO
-              </button>
+              <>
+                <button
+                  className="btn btn--primary"
+                  onClick={handlePay}
+                  disabled={paying}
+                >
+                  {paying ? 'Открываю...' : 'Оформить PRO — 299 ₽'}
+                </button>
+                {payError && (
+                  <div className="alert alert--error" style={{ marginTop: 8 }}>
+                    {payError}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -107,7 +136,7 @@ export function PricingPage() {
             <button
               className="btn btn--ghost btn--sm"
               onClick={() => {
-                const link = `https://max.ru/MaxCommentsBot?start=ref_${user.ref_code}`;
+                const link = `https://max.ru/id861708697380_2_bot?start=ref_${user.ref_code}`;
                 navigator.clipboard.writeText(link);
               }}
             >

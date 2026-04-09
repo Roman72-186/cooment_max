@@ -10,19 +10,18 @@ import { pool } from '../db/db.js';
 import type { WebhookUpdate } from '../../../shared/types.js';
 
 export async function onBotAdded(update: WebhookUpdate): Promise<void> {
-  const message = update.message;
-  if (!message) return;
-
-  const chatId = message.recipient.chat_id;
-  const chatType = message.recipient.chat_type;
-
-  // Обрабатываем только добавление в каналы (не группы и не личку)
-  if (chatType !== 'channel') {
-    logger.debug('onBotAdded: игнорируем не-канал', { chatId, chatType });
+  // bot_added: chat_id и user на верхнем уровне (не внутри message)
+  const rawChatId = update.chat_id ?? update.message?.recipient?.chat_id;
+  if (!rawChatId) {
+    logger.warn('onBotAdded: нет chat_id в событии', { update });
     return;
   }
+  const chatId = String(rawChatId);
 
-  logger.info('Бот добавлен в канал', { chatId });
+  // Тип чата: из update.chat_type или из getChatInfo
+  const chatType = update.chat_type ?? update.message?.recipient?.chat_type;
+
+  logger.info('Бот добавлен в чат', { chatId, chatType });
 
   try {
     // Получаем информацию о канале из MAX API
@@ -32,9 +31,15 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
       type: string;
     };
 
+    // Обрабатываем только каналы (не группы и не личку)
+    const resolvedType = chatType ?? chatInfo.type;
+    if (resolvedType !== 'channel') {
+      logger.debug('onBotAdded: игнорируем не-канал', { chatId, resolvedType });
+      return;
+    }
+
     // Определяем владельца канала через список администраторов
-    // (message.sender = тот, кто добавил бота, но это может быть обычный admin, не owner)
-    const sender = message.sender;
+    const sender = update.user ?? update.message?.sender;
     let ownerCandidate = sender;
 
     try {
@@ -56,11 +61,15 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
         });
       }
     } catch (adminErr) {
-      // Не критично — используем отправителя события как запасной вариант
       logger.warn('Не удалось получить список администраторов, используем sender', {
         chatId,
         err: adminErr instanceof Error ? adminErr.message : String(adminErr),
       });
+    }
+
+    if (!ownerCandidate) {
+      logger.warn('onBotAdded: не удалось определить владельца', { chatId });
+      return;
     }
 
     const owner = await db.upsertUser({
@@ -73,14 +82,12 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
     const existingChannel = await db.getChannelByMaxChatId(chatId);
 
     if (existingChannel) {
-      // Реактивация: просто снимаем is_active = false, обновляем название
       await pool.query(
         'UPDATE channels SET is_active = true, channel_name = $1 WHERE max_chat_id = $2',
         [chatInfo.title ?? null, chatId]
       );
       logger.info('Канал реактивирован', { chatId, channelId: existingChannel.id });
     } else {
-      // Новый канал
       await db.upsertChannel({
         owner_id: owner.id,
         max_chat_id: chatId,
@@ -89,7 +96,7 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
       logger.info('Канал зарегистрирован', { chatId, ownerId: owner.id });
     }
 
-    // Отправляем подтверждение реальному владельцу в личку
+    // Отправляем подтверждение владельцу в личку
     await sendMessageToUser(
       ownerCandidate.user_id,
       `✅ Канал **${chatInfo.title ?? chatId}** подключён!\n\nКаждый новый пост будет получать кнопку «💬 Комментарии».\n\nОткройте панель управления для настройки.`

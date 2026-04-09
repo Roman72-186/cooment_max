@@ -19,7 +19,7 @@ userRouter.get('/me', requireAuth, async (req, res) => {
              username = COALESCE(EXCLUDED.username, users.username)
        RETURNING
          id, max_user_id, name, username,
-         plan, plan_expires, ref_code, referred_by, created_at`,
+         plan, plan_expires, is_admin, ref_code, referred_by, created_at`,
       [maxUser.user_id, maxUser.name, maxUser.username ?? null]
     );
     const user = userRows[0];

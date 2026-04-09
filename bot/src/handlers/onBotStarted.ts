@@ -57,17 +57,17 @@ export async function onBotStarted(update: WebhookUpdate): Promise<void> {
   }
 }
 
-// ─── Тексты ──────────────────────────────────────────────────────
+// ─── Тексты ────────────
 
 function buildWelcomeText(name: string): string {
   const firstName = name.split(' ')[0];
   return `👋 Привет, ${firstName}!
 
-💬 **MAX Comments** — сервис комментариев для каналов в MAX мессенджере.
+💬 **Комментарии в ПОСТ** — сервис комментариев для каналов в MAX мессенджере.
 
 В MAX нет нативных комментариев к постам — я это исправляю. Подключи свой канал, и каждый новый пост автоматически получит кнопку «💬 Комментарии». Подписчики смогут обсуждать посты прямо внутри приложения.
 
-──────────────────────────
+─────
 
 ✅ **Что умею:**
 
@@ -78,7 +78,7 @@ function buildWelcomeText(name: string): string {
 • Фильтрую нежелательные слова автоматически
 • Работаю с несколькими каналами одновременно
 
-──────────────────────────
+─────
 
 🚀 **Как подключить канал:**
 
@@ -87,12 +87,19 @@ function buildWelcomeText(name: string): string {
 3. Дай права: читать, публиковать, редактировать
 4. Готово — следующий пост уже получит кнопку!
 
-──────────────────────────
+─────
+
+📄 **Документы:**
+
+• [Публичная оферта](https://sushi-house-39.online/legal/offer)
+• [Политика конфиденциальности](https://sushi-house-39.online/legal/privacy)
+
+─────
 
 Нажми кнопку ниже, чтобы открыть панель управления 👇`;
 }
 
-// ─── Кнопка открытия Mini App ────────────────────────────────────
+// ─── Кнопка открытия Mini App ───────────────
 
 function buildOpenAppButton(): unknown {
   return {
@@ -108,7 +115,7 @@ function buildOpenAppButton(): unknown {
   };
 }
 
-// ─── Реферальная связь ───────────────────────────────────────────
+// ─── Реферальная связь ──────────────────────
 
 async function linkReferral(userId: number, refCode: string): Promise<void> {
   try {
@@ -117,12 +124,25 @@ async function linkReferral(userId: number, refCode: string): Promise<void> {
       'SELECT id FROM users WHERE ref_code = $1',
       [refCode]
     );
-    if (referrer.rows.length > 0) {
+    if (referrer.rows.length === 0) return;
+
+    const { rowCount } = await pool.query(
+      'UPDATE users SET referred_by = $1 WHERE id = $2 AND referred_by IS NULL',
+      [referrer.rows[0].id, userId]
+    );
+
+    // Если связь установлена (не была установлена ранее) — выдаём +7 дней PRO новому пользователю
+    if (rowCount && rowCount > 0) {
       await pool.query(
-        'UPDATE users SET referred_by = $1 WHERE id = $2 AND referred_by IS NULL',
-        [referrer.rows[0].id, userId]
+        `UPDATE users
+            SET plan         = 'pro',
+                plan_expires = GREATEST(COALESCE(plan_expires, NOW()), NOW()) + INTERVAL '7 days'
+          WHERE id = $1`,
+        [userId]
       );
-      logger.info('Реферальная связь установлена', { userId, referrerId: referrer.rows[0].id });
+      logger.info('Реферальная связь установлена, выдано +7 дней PRO', {
+        userId, referrerId: referrer.rows[0].id,
+      });
     }
   } catch (err) {
     logger.warn('Не удалось установить реферальную связь', { userId, refCode, err });

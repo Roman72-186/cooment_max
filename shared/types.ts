@@ -8,6 +8,7 @@ export interface User {
   username: string | null;
   plan: 'free' | 'pro';
   plan_expires: string | null; // ISO дата
+  is_admin: boolean;           // суперадмин платформы
   ref_code: string | null;
   referred_by: number | null;
   created_at: string;
@@ -156,6 +157,10 @@ export interface WebhookUpdate {
   timestamp: number;
   update_type: UpdateType;
   message?: MaxMessage;
+  // Поля для bot_added / bot_removed
+  chat_id?: string | number;
+  chat_type?: 'channel' | 'group' | 'dialog';
+  user?: MaxUser;
   callback?: {
     callback_id: string;
     user: MaxUser;

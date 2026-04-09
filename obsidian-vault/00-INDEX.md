@@ -20,8 +20,10 @@
 | [[05-DevLog/2026-04-08-progress]] | Шаги 12–15: бот, Mini App, backend |
 | [[05-DevLog/2026-04-08-vps-migration]] | Перенос с Vercel на VPS, фикс SDK, startapp |
 | [[05-DevLog/2026-04-08-final-working]] | ✅ Итоговое рабочее состояние системы |
+| [[05-DevLog/2026-04-09-soft-launch-prep]] | Admin-система, фикс onBotAdded, T-Bank платежи |
 | [[06-Decisions/ADR-001-tech-stack]] | ADR-001: Выбор технологического стека |
 | [[06-Decisions/ADR-002-no-vercel]] | ADR-002: Отказ от Vercel — Mini App на VPS |
+| [[06-Decisions/ADR-003-bugs-and-lessons]] | ADR-003: Найденные баги, диагностика, правила |
 
 ## Быстрые ссылки
 

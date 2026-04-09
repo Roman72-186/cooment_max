@@ -10,7 +10,8 @@ export type Page =
   | { id: 'dashboard' }
   | { id: 'analytics'; channelId: number }
   | { id: 'settings'; channelId: number }
-  | { id: 'pricing' };
+  | { id: 'pricing' }
+  | { id: 'admin' };
 
 interface AppState {
   // Навигация

@@ -65,6 +65,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   }
 
   if (!initData) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: 'requireAuth: нет X-Init-Data', path: req.path }));
     res.status(401).json({ error: 'Требуется аутентификация' });
     return;
   }
@@ -73,6 +74,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   const user = validateInitData(initData, token);
 
   if (!user) {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), level: 'warn', msg: 'requireAuth: невалидный initData', path: req.path, initDataSnippet: initData.slice(0, 80) }));
     res.status(401).json({ error: 'Невалидный initData' });
     return;
   }

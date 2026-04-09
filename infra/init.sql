@@ -12,6 +12,7 @@ CREATE TABLE users (
   username       TEXT,                              -- @юзернейм
   plan           VARCHAR(20) DEFAULT 'free',        -- 'free' | 'pro'
   plan_expires   TIMESTAMPTZ,                       -- NULL = бесплатно навсегда
+  is_admin       BOOLEAN DEFAULT false,             -- суперадмин платформы
   ref_code       VARCHAR(16) UNIQUE,                -- реферальный код пользователя
   referred_by    BIGINT REFERENCES users(id),       -- кто пригласил
   created_at     TIMESTAMPTZ DEFAULT NOW()
@@ -67,7 +68,7 @@ CREATE TABLE comments (
 CREATE TABLE payments (
   id            BIGSERIAL PRIMARY KEY,
   user_id       BIGINT REFERENCES users(id),
-  yookassa_id   TEXT UNIQUE,
+  tbank_payment_id TEXT,              -- PaymentId от T-Bank
   amount_rub    NUMERIC(10,2),
   plan          VARCHAR(20),
   status        VARCHAR(20),          -- pending | succeeded | cancelled

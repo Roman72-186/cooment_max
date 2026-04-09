@@ -1,19 +1,26 @@
 // Dashboard — главная страница владельца канала
+import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
+import { getReferralStats } from '../api/backend';
 import type { ChannelSummary } from '../api/backend';
 
 export function DashboardPage() {
   const { user, setPage } = useAppStore();
+  const [refStats, setRefStats] = useState<{
+    invited: number; converted: number; days_earned: number; ref_link: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    getReferralStats().then(setRefStats).catch(() => {});
+  }, []);
 
   if (!user) return null;
 
   const isPro = user.plan === 'pro' &&
     (!user.plan_expires || new Date(user.plan_expires) > new Date());
 
-  // Реферальная ссылка (бот пришлёт её через /start)
-  const refLink = user.ref_code
-    ? `https://max.ru/MaxCommentsBot?start=ref_${user.ref_code}`
-    : null;
+  const refLink = refStats?.ref_link
+    ?? (user.ref_code ? `https://max.ru/id861708697380_2_bot?start=ref_${user.ref_code}` : null);
 
   return (
     <div className="page">
@@ -61,11 +68,27 @@ export function DashboardPage() {
         {/* Реферальная программа */}
         {refLink && (
           <div className="ref-card">
-            <div className="ref-card__title">Реферальная программа</div>
+            <div className="ref-card__title">🔗 Реферальная программа</div>
             <div className="ref-card__desc">
-              Пригласите владельца канала — получите <strong>+30 дней PRO</strong>
+              Пригласите владельца канала — он получит <strong>+7 дней PRO</strong> бесплатно,
+              вы получите <strong>+30 дней PRO</strong> когда он оформит подписку.
             </div>
-            <div className="ref-card__link">{refLink}</div>
+            {refStats && (
+              <div className="ref-stats">
+                <div className="ref-stat">
+                  <span className="ref-stat__val">{refStats.invited}</span>
+                  <span className="ref-stat__lbl">приглашено</span>
+                </div>
+                <div className="ref-stat">
+                  <span className="ref-stat__val">{refStats.converted}</span>
+                  <span className="ref-stat__lbl">купили PRO</span>
+                </div>
+                <div className="ref-stat">
+                  <span className="ref-stat__val">{refStats.days_earned}</span>
+                  <span className="ref-stat__lbl">дней заработано</span>
+                </div>
+              </div>
+            )}
             <button
               className="btn btn--ghost btn--sm"
               onClick={() => navigator.clipboard.writeText(refLink)}

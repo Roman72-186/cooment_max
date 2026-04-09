@@ -40,6 +40,11 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
       return;
     }
 
+    if (!channel.comments_enabled) {
+      logger.debug('Комментарии отключены для канала, пропускаем', { chatId });
+      return;
+    }
+
     // 2. Сохранить пост в БД
     const post = await db.createPost({
       channel_id: channel.id,
