@@ -4,6 +4,7 @@
 // Комментарии хранятся напрямую в PostgreSQL
 
 import { getChatInfo, getChatAdmins, sendMessageToUser } from '../api/maxClient.js';
+import { config } from '../utils/config.js';
 import * as db from '../db/db.js';
 import { logger } from '../utils/logger.js';
 import { pool } from '../db/db.js';
@@ -23,6 +24,12 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
 
   logger.info('Бот добавлен в чат', { chatId, chatType });
 
+  // Если тип известен из события — проверяем до запроса к API
+  if (chatType && chatType !== 'channel') {
+    logger.debug('onBotAdded: игнорируем не-канал', { chatId, chatType });
+    return;
+  }
+
   try {
     // Получаем информацию о канале из MAX API
     const chatInfo = await getChatInfo(chatId) as {
@@ -31,10 +38,9 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
       type: string;
     };
 
-    // Обрабатываем только каналы (не группы и не личку)
-    const resolvedType = chatType ?? chatInfo.type;
-    if (resolvedType !== 'channel') {
-      logger.debug('onBotAdded: игнорируем не-канал', { chatId, resolvedType });
+    // Дополнительная проверка по ответу API (если тип не был известен заранее)
+    if (chatInfo.type !== 'channel') {
+      logger.debug('onBotAdded: игнорируем не-канал (по getChatInfo)', { chatId, type: chatInfo.type });
       return;
     }
 
@@ -96,11 +102,29 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
       logger.info('Канал зарегистрирован', { chatId, ownerId: owner.id });
     }
 
-    // Отправляем подтверждение владельцу в личку
-    await sendMessageToUser(
-      ownerCandidate.user_id,
-      `✅ Канал **${chatInfo.title ?? chatId}** подключён!\n\nКаждый новый пост будет получать кнопку «💬 Комментарии».\n\nОткройте панель управления для настройки.`
-    );
+    // Отправляем пошаговое приветствие владельцу в личку
+    const channelName = chatInfo.title ?? chatId;
+    const welcomeText =
+      `✅ Канал «${channelName}» подключён!\n\n` +
+      `Что делать дальше:\n\n` +
+      `1️⃣ Убедитесь, что боту выданы права:\n` +
+      `   • читать сообщения\n` +
+      `   • публиковать сообщения\n` +
+      `   • редактировать сообщения\n\n` +
+      `2️⃣ Опубликуйте любой пост в канале — бот автоматически добавит кнопку «💬 Комментарии».\n\n` +
+      `3️⃣ Настройте канал в панели управления: стоп-слова, реакции, уведомления.`;
+    const button = {
+      type: 'inline_keyboard',
+      payload: {
+        buttons: [[{
+          type: 'open_app',
+          text: '⚙️ Открыть панель управления',
+          web_app: config.maxBotUrl,
+          payload: 'dashboard',
+        }]],
+      },
+    };
+    await sendMessageToUser(ownerCandidate.user_id, welcomeText, [button]);
 
   } catch (err) {
     logger.error('Ошибка при добавлении бота в канал', { chatId, err });

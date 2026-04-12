@@ -32,12 +32,14 @@ export function DashboardPage() {
               {isPro ? 'PRO' : 'FREE'}
             </span>
           </div>
-          <button
-            className="btn btn--ghost btn--sm"
-            onClick={() => setPage({ id: 'pricing' })}
-          >
-            {isPro ? 'Подписка' : '⬆ PRO'}
-          </button>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              className="btn btn--ghost btn--sm"
+              onClick={() => setPage({ id: 'pricing' })}
+            >
+              {isPro ? 'Подписка' : '⬆ PRO'}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -60,6 +62,7 @@ export function DashboardPage() {
                 channel={ch}
                 onAnalytics={() => setPage({ id: 'analytics', channelId: ch.id })}
                 onSettings={() => setPage({ id: 'settings', channelId: ch.id })}
+                onInbox={() => setPage({ id: 'inbox', channelId: ch.id, channelName: ch.channel_name ?? ch.max_chat_id })}
               />
             ))}
           </div>
@@ -108,15 +111,29 @@ interface ChannelCardProps {
   channel: ChannelSummary;
   onAnalytics: () => void;
   onSettings: () => void;
+  onInbox: () => void;
 }
 
-function ChannelCard({ channel, onAnalytics, onSettings }: ChannelCardProps) {
+function openChannelInMax(chatId: string) {
+  const url = `https://max.ru/id${chatId}`;
+  if (window.WebApp && typeof window.WebApp.openLink === 'function') {
+    window.WebApp.openLink(url);
+  } else {
+    window.open(url, '_blank');
+  }
+}
+
+function ChannelCard({ channel, onAnalytics, onSettings, onInbox }: ChannelCardProps) {
   return (
     <div className="channel-card">
       <div className="channel-card__header">
-        <div className="channel-card__name">
-          {channel.channel_name ?? channel.max_chat_id}
-        </div>
+        <button
+          className="channel-card__name channel-card__name--link"
+          onClick={() => openChannelInMax(channel.max_chat_id)}
+          title="Открыть канал в MAX"
+        >
+          {channel.channel_name || channel.max_chat_id} ↗
+        </button>
         <div className={`channel-card__status ${channel.is_active ? '' : 'channel-card__status--off'}`}>
           {channel.is_active ? 'активен' : 'неактивен'}
         </div>
@@ -138,6 +155,9 @@ function ChannelCard({ channel, onAnalytics, onSettings }: ChannelCardProps) {
       </div>
 
       <div className="channel-card__actions">
+        <button className="btn btn--ghost btn--sm" onClick={onInbox} title="Входящие комментарии">
+          📥
+        </button>
         <button className="btn btn--secondary btn--sm" onClick={onAnalytics}>
           Аналитика
         </button>

@@ -11,6 +11,7 @@ export interface User {
   is_admin: boolean;           // суперадмин платформы
   ref_code: string | null;
   referred_by: number | null;
+  reply_notifications_enabled: boolean; // получать DM когда ответили на комментарий
   created_at: string;
 }
 
@@ -28,6 +29,8 @@ export interface Channel {
   connected_at: string;
   comments_enabled: boolean;         // вкл/выкл комментарии на канале
   banned_words: string[];            // список стоп-слов (PRO)
+  post_reactions: string[];          // эмодзи реакций под постами (до 5)
+  notifications_enabled: boolean;    // уведомлять владельца о новых комментариях
 }
 
 // Краткая сводка канала для списка на Dashboard
@@ -39,6 +42,7 @@ export interface ChannelSummary {
   post_count: number;
   total_comments: number;
   comments_enabled: boolean;
+  notifications_enabled: boolean;  // уведомлять владельца о новых комментариях
   connected_at: string;
 }
 
@@ -77,6 +81,10 @@ export interface Post {
   view_count: number;
   comment_count: number;
   published_at: string;
+  attachments_json?: unknown[];     // оригинальные медиа-вложения (фото/видео)
+  comments_enabled: boolean;        // зафиксировано на момент создания поста
+  post_reactions: string[];         // зафиксировано на момент создания поста
+  last_notified_at: string | null;  // время последней отправки уведомления владельцу
 }
 
 // ─── КОММЕНТАРИЙ ─────────────────────────────────────────────────
@@ -93,8 +101,10 @@ export interface Comment {
   author_username?: string;
   author_max_id?: number;          // MAX user ID автора — для проверки прав удаления
   channel_owner_max_id?: number;   // MAX user ID владельца канала
+  channel_id?: number;             // ID канала (для бана)
   likes_count?: number;            // количество ❤️ на комментарии
   liked_by_me?: boolean;           // текущий пользователь поставил ❤️
+  emoji_reactions?: Array<{ emoji: string; count: number; reacted_by_me: boolean }>;
   replies?: Comment[];
 }
 
@@ -102,7 +112,7 @@ export interface Comment {
 export interface Payment {
   id: number;
   user_id: number;
-  yookassa_id: string | null;
+  tbank_payment_id: string | null;
   amount_rub: number;
   plan: string;
   status: 'pending' | 'succeeded' | 'cancelled';

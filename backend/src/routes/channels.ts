@@ -114,7 +114,12 @@ channelsRouter.post('/sync', requireAuth, async (req, res) => {
     // 4. Возвращаем обновлённый список каналов пользователя
     const { rows: userChannels } = await pool.query(
       `SELECT id, max_chat_id, channel_name, is_active, post_count,
-              total_comments, comments_enabled, banned_words, connected_at
+              comments_enabled, banned_words, post_reactions, connected_at,
+              COALESCE((
+                SELECT COUNT(*) FROM comments cm
+                JOIN posts p ON p.id = cm.post_id
+                WHERE p.channel_id = channels.id AND cm.is_hidden = false
+              ), 0)::int AS total_comments
          FROM channels WHERE owner_id = $1 ORDER BY connected_at DESC`,
       [userId]
     );
@@ -148,11 +153,11 @@ channelsRouter.get('/:id/analytics', requireAuth, async (req, res) => {
       return;
     }
 
-    // Данные по дням — живой подсчёт из comments (не ждём ночной агрегации)
+    // Данные по дням — живой подсчёт из comments + views из analytics_daily
     const { rows: dayRows } = await pool.query(
       `SELECT
          d.date::text                                          AS date,
-         0                                                     AS views,
+         COALESCE(ad.views, 0)::int                           AS views,
          COALESCE(agg.comments, 0)::int                       AS comments,
          COALESCE(agg.reactions, 0)::int                      AS reactions
        FROM generate_series(
@@ -160,6 +165,8 @@ channelsRouter.get('/:id/analytics', requireAuth, async (req, res) => {
          CURRENT_DATE,
          '1 day'
        ) AS d(date)
+       LEFT JOIN analytics_daily ad
+         ON ad.channel_id = $1 AND ad.date = d.date
        LEFT JOIN (
          SELECT
            DATE(c.created_at)          AS day,
@@ -226,13 +233,20 @@ channelsRouter.patch('/:id/settings', requireAuth, async (req, res) => {
     return;
   }
 
-  const { comments_enabled, banned_words } = req.body as {
+  const { comments_enabled, banned_words, post_reactions, notifications_enabled } = req.body as {
     comments_enabled?: boolean;
     banned_words?: string[];
+    post_reactions?: string[];
+    notifications_enabled?: boolean;
   };
 
   // Должно быть хотя бы одно поле
-  if (comments_enabled === undefined && banned_words === undefined) {
+  if (
+    comments_enabled === undefined &&
+    banned_words === undefined &&
+    post_reactions === undefined &&
+    notifications_enabled === undefined
+  ) {
     res.status(400).json({ error: 'Нечего обновлять' });
     return;
   }
@@ -241,6 +255,14 @@ channelsRouter.patch('/:id/settings', requireAuth, async (req, res) => {
   if (banned_words !== undefined) {
     if (!Array.isArray(banned_words) || banned_words.length > 100) {
       res.status(400).json({ error: 'banned_words: массив максимум 100 слов' });
+      return;
+    }
+  }
+
+  // Валидация post_reactions
+  if (post_reactions !== undefined) {
+    if (!Array.isArray(post_reactions) || post_reactions.length > 5) {
+      res.status(400).json({ error: 'post_reactions: массив максимум 5 эмодзи' });
       return;
     }
   }
@@ -268,18 +290,86 @@ channelsRouter.patch('/:id/settings', requireAuth, async (req, res) => {
       params.push(banned_words);
       sets.push(`banned_words = $${params.length}`);
     }
+    if (post_reactions !== undefined) {
+      params.push(post_reactions);
+      sets.push(`post_reactions = $${params.length}`);
+    }
+    if (notifications_enabled !== undefined) {
+      params.push(notifications_enabled);
+      sets.push(`notifications_enabled = $${params.length}`);
+    }
 
     const { rows } = await pool.query(
       `UPDATE channels
           SET ${sets.join(', ')}
         WHERE id = $1
-        RETURNING id, comments_enabled, banned_words`,
+        RETURNING id, comments_enabled, banned_words, post_reactions, notifications_enabled`,
       params
     );
 
     res.json(rows[0]);
   } catch (err) {
     console.error('PATCH /api/channels/:id/settings error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ─── POST /api/channels/:id/ban ─────────────────────────────────
+// Заблокировать пользователя (по max_user_id) от комментирования в канале
+channelsRouter.post('/:id/ban', requireAuth, async (req, res) => {
+  const channelId = parseInt(req.params.id, 10);
+  const { banned_max_id } = req.body as { banned_max_id: number };
+  const maxUser = req.maxUser!;
+
+  if (isNaN(channelId) || !banned_max_id) {
+    res.status(400).json({ error: 'Укажите banned_max_id' });
+    return;
+  }
+
+  try {
+    const channel = await getOwnedChannel(channelId, maxUser.user_id);
+    if (channel === null) { res.status(404).json({ error: 'Канал не найден' }); return; }
+    if (channel === 'forbidden') { res.status(403).json({ error: 'Нет прав' }); return; }
+
+    await pool.query(
+      `INSERT INTO channel_bans (channel_id, banned_max_id)
+       VALUES ($1, $2)
+       ON CONFLICT (channel_id, banned_max_id) DO NOTHING`,
+      [channelId, banned_max_id]
+    );
+
+    res.status(204).send();
+  } catch (err) {
+    console.error('POST /api/channels/:id/ban error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ─── DELETE /api/channels/:id/ban/:maxId ─────────────────────────
+// Разблокировать пользователя
+channelsRouter.delete('/:id/ban/:maxId', requireAuth, async (req, res) => {
+  const channelId = parseInt(req.params.id, 10);
+  const bannedMaxId = parseInt(req.params.maxId, 10);
+  const maxUser = req.maxUser!;
+
+  if (isNaN(channelId) || isNaN(bannedMaxId)) {
+    res.status(400).json({ error: 'Неверные параметры' });
+    return;
+  }
+
+  try {
+    const channel = await getOwnedChannel(channelId, maxUser.user_id);
+    if (channel === null) { res.status(404).json({ error: 'Канал не найден' }); return; }
+    if (channel === 'forbidden') { res.status(403).json({ error: 'Нет прав' }); return; }
+
+    await pool.query(
+      'DELETE FROM channel_bans WHERE channel_id = $1 AND banned_max_id = $2',
+      [channelId, bannedMaxId]
+    );
+
+    res.status(204).send();
+  } catch (err) {
+    console.error('DELETE /api/channels/:id/ban/:maxId error:', err);
     res.status(500).json({ error: 'Ошибка сервера' });
   }
 });

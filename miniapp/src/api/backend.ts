@@ -19,6 +19,12 @@ api.interceptors.request.use((config) => {
 
 // ─── ТИПЫ ────────────────────────────────────────────────────────
 
+export interface EmojiReaction {
+  emoji: string;
+  count: number;
+  reacted_by_me: boolean;
+}
+
 export interface Comment {
   id: number;
   post_id: number;
@@ -27,12 +33,14 @@ export interface Comment {
   author_username?: string;
   author_max_id?: number;         // MAX user ID автора (для проверки прав удаления)
   channel_owner_max_id?: number;  // MAX user ID владельца канала
+  channel_id?: number;            // ID канала (для бана)
   parent_id: number | null;
   text: string;
   is_hidden: boolean;
   created_at: string;
-  likes_count?: number;           // количество ❤️
-  liked_by_me?: boolean;          // текущий пользователь поставил ❤️
+  likes_count?: number;           // устаревшее — для совместимости
+  liked_by_me?: boolean;          // устаревшее — для совместимости
+  emoji_reactions?: EmojiReaction[];  // актуальные emoji-реакции
   replies?: Comment[];
 }
 
@@ -71,9 +79,10 @@ export async function deleteComment(commentId: number): Promise<void> {
 }
 
 export async function toggleReaction(
-  commentId: number
-): Promise<{ liked: boolean; likes_count: number }> {
-  const { data } = await api.post(`/api/reactions/${commentId}`);
+  commentId: number,
+  emoji: string = '❤️'
+): Promise<{ emoji: string; liked: boolean; reactions: EmojiReaction[] }> {
+  const { data } = await api.post(`/api/reactions/${commentId}`, { emoji });
   return data;
 }
 
@@ -88,6 +97,25 @@ export async function getPost(postId: number): Promise<Post | null> {
   }
 }
 
+// Зафиксировать просмотр поста (открытие раздела комментариев)
+export async function recordView(postId: number): Promise<void> {
+  try {
+    await api.post(`/api/posts/${postId}/view`);
+  } catch {
+    // Не критично — просто не считаем этот просмотр
+  }
+}
+
+// Попросить бота немедленно обновить счётчик на кнопке поста.
+// Вызывается перед закрытием Mini App, чтобы пользователь увидел актуальное число.
+export async function refreshPostCounter(postId: number): Promise<void> {
+  try {
+    await api.post(`/api/posts/${postId}/refresh`);
+  } catch {
+    // Не критично — счётчик обновится через фоновый job (≤60 с)
+  }
+}
+
 // ─── ПОЛЬЗОВАТЕЛЬ ────────────────────────────────────────────────
 
 export interface ChannelSummary {
@@ -98,7 +126,9 @@ export interface ChannelSummary {
   post_count: number;
   total_comments: number;
   comments_enabled: boolean;
+  notifications_enabled: boolean;
   banned_words: string[];
+  post_reactions: string[];
   connected_at: string;
 }
 
@@ -111,12 +141,17 @@ export interface UserMe {
   plan_expires: string | null;
   ref_code: string | null;
   is_admin: boolean;
+  reply_notifications_enabled: boolean;
   channels: ChannelSummary[];
 }
 
 export async function getUserMe(): Promise<UserMe> {
   const { data } = await api.get<UserMe>('/api/user/me');
   return data;
+}
+
+export async function updateReplyNotifications(enabled: boolean): Promise<void> {
+  await api.patch('/api/user/notifications', { enabled });
 }
 
 // ─── КАНАЛЫ ──────────────────────────────────────────────────────
@@ -162,14 +197,58 @@ export async function syncChannels(): Promise<{ registered: number; channels: Ch
 
 export async function updateChannelSettings(
   channelId: number,
-  settings: { comments_enabled?: boolean; banned_words?: string[] }
-): Promise<{ id: number; comments_enabled: boolean; banned_words: string[] }> {
+  settings: {
+    comments_enabled?: boolean;
+    banned_words?: string[];
+    post_reactions?: string[];
+    notifications_enabled?: boolean;
+  }
+): Promise<{
+  id: number;
+  comments_enabled: boolean;
+  banned_words: string[];
+  post_reactions: string[];
+  notifications_enabled: boolean;
+}> {
   const { data } = await api.patch(`/api/channels/${channelId}/settings`, settings);
   return data;
 }
 
-export async function createPayment(): Promise<{ payment_url: string; payment_id: number }> {
-  const { data } = await api.post('/api/payments/create');
+// ─── АГРЕГАТОР КОММЕНТАРИЕВ ────────────────────────────────────────
+
+export interface FeedItem {
+  id: number;
+  text: string;
+  created_at: string;
+  author_name: string;
+  post_id: number;
+  post_preview: string | null;
+  channel_id: number;
+  channel_name: string | null;
+  max_chat_id: string;
+}
+
+export async function getFeed(channelId?: number): Promise<FeedItem[]> {
+  const { data } = await api.get<FeedItem[]>('/api/comments/feed', {
+    params: channelId ? { channel_id: channelId } : undefined,
+  });
+  return data;
+}
+
+export async function createPayment(promoCode?: string): Promise<{ payment_url: string; payment_id: number }> {
+  const { data } = await api.post('/api/payments/create', promoCode ? { promo_code: promoCode } : {});
+  return data;
+}
+
+export interface PromoValidation {
+  valid: boolean;
+  discount_percent?: number;
+  final_price?: number;
+  error?: string;
+}
+
+export async function validatePromoCode(code: string): Promise<PromoValidation> {
+  const { data } = await api.post('/api/payments/validate-promo', { code });
   return data;
 }
 
@@ -237,4 +316,77 @@ export async function adminToggleChannel(channelId: number, isActive: boolean): 
 
 export async function adminDeleteChannel(channelId: number): Promise<void> {
   await api.delete(`/api/admin/channels/${channelId}`);
+}
+
+// ─── БАН ПОЛЬЗОВАТЕЛЕЙ ───────────────────────────────────────────
+
+export async function banUser(channelId: number, bannedMaxId: number): Promise<void> {
+  await api.post(`/api/channels/${channelId}/ban`, { banned_max_id: bannedMaxId });
+}
+
+// ─── НАСТРОЙКИ ПЛАТФОРМЫ ──────────────────────────────────────────
+
+export async function getPaymentConfig(): Promise<{ price: number; days: number }> {
+  const { data } = await api.get('/api/payments/config');
+  return data;
+}
+
+export async function adminGetSettings(): Promise<{ pro_price_rub: number; pro_days: number }> {
+  const { data } = await api.get('/api/admin/settings');
+  return data;
+}
+
+export async function adminUpdateSettings(
+  settings: { pro_price_rub?: number; pro_days?: number }
+): Promise<void> {
+  await api.patch('/api/admin/settings', settings);
+}
+
+// ─── ADMIN: ИСТОРИЯ ПЛАТЕЖЕЙ ──────────────────────────────────────
+
+export interface AdminPayment {
+  id: number;
+  user_name: string | null;
+  max_user_id: number | null;
+  amount_rub: number;
+  status: 'pending' | 'succeeded' | 'cancelled';
+  promo_code: string | null;
+  discount_percent: number | null;
+  created_at: string;
+}
+
+export async function adminGetPayments(): Promise<AdminPayment[]> {
+  const { data } = await api.get('/api/admin/payments');
+  return data;
+}
+
+// ─── ADMIN: ПРОМО-КОДЫ ────────────────────────────────────────────
+
+export interface PromoCode {
+  id: number;
+  code: string;
+  discount_percent: number;
+  max_uses: number | null;
+  used_count: number;
+  expires_at: string | null;
+  created_at: string;
+}
+
+export async function adminGetPromoCodes(): Promise<PromoCode[]> {
+  const { data } = await api.get('/api/admin/promo-codes');
+  return data;
+}
+
+export async function adminCreatePromoCode(payload: {
+  code: string;
+  discount_percent: number;
+  max_uses?: number | null;
+  expires_at?: string | null;
+}): Promise<PromoCode> {
+  const { data } = await api.post('/api/admin/promo-codes', payload);
+  return data;
+}
+
+export async function adminDeletePromoCode(code: string): Promise<void> {
+  await api.delete(`/api/admin/promo-codes/${code}`);
 }

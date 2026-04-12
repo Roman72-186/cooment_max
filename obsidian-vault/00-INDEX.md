@@ -21,6 +21,10 @@
 | [[05-DevLog/2026-04-08-vps-migration]] | Перенос с Vercel на VPS, фикс SDK, startapp |
 | [[05-DevLog/2026-04-08-final-working]] | ✅ Итоговое рабочее состояние системы |
 | [[05-DevLog/2026-04-09-soft-launch-prep]] | Admin-система, фикс onBotAdded, T-Bank платежи |
+| [[05-DevLog/2026-04-09-admin-and-sync]] | Админка, синхронизация каналов, neumorphism UI |
+| [[05-DevLog/2026-04-09-ux-counters-stopwords]] | UX: счётчики, стоп-слова, mobile-адаптив |
+| [[05-DevLog/2026-04-09-emoji-reactions-comments]] | Emoji-реакции на комментарии, плоские треды |
+| [[05-DevLog/2026-04-10-reply-notifications]] | Reply-уведомления, баннер notify, DB-очередь |
 | [[06-Decisions/ADR-001-tech-stack]] | ADR-001: Выбор технологического стека |
 | [[06-Decisions/ADR-002-no-vercel]] | ADR-002: Отказ от Vercel — Mini App на VPS |
 | [[06-Decisions/ADR-003-bugs-and-lessons]] | ADR-003: Найденные баги, диагностика, правила |
@@ -44,12 +48,13 @@
 | 14 | Mini App открывается в MAX | ✅ |
 | 15 | Backend REST API | ✅ |
 | 15+ | Комментарии можно писать | ✅ |
-| 16 | OnboardingPage | ⏳ |
-| 17 | DashboardPage | ⏳ |
-| 18 | AnalyticsPage (PRO) | ⏳ |
-| 19 | ЮКасса платежи | ⏳ |
-| 20 | PricingPage + SettingsPage + рефералки | ⏳ |
+| 16 | OnboardingPage | ✅ |
+| 17 | DashboardPage | ✅ |
+| 18 | AnalyticsPage (PRO) | ✅ |
+| 19 | T-Bank платежи | ✅ (webhook URL нужно активировать в ЛК) |
+| 20 | PricingPage + SettingsPage + рефералки | ✅ |
+| 20+ | AdminPage, emoji-реакции, reply-уведомления | ✅ |
 | 21 | Полный E2E тест | ⏳ |
-| 22 | deploy.sh | ✅ (готов) |
-| 23 | Боевой токен MAX | ⏳ |
-| 24 | Мягкий запуск | ⏳ |
+| 22 | deploy.sh | ✅ |
+| 23 | Боевой токен MAX | ✅ (работает в production) |
+| 24 | Мягкий запуск | 🔄 В процессе (3 канала подключено) |

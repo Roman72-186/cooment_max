@@ -1,7 +1,7 @@
 // Страница тарифов — FREE vs PRO, кнопка оплаты T-Bank
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAppStore } from '../store/useAppStore';
-import { createPayment } from '../api/backend';
+import { createPayment, getPaymentConfig, validatePromoCode, type PromoValidation } from '../api/backend';
 
 const FREE_FEATURES = [
   'Комментарии на каналах',
@@ -23,12 +23,42 @@ export function PricingPage() {
   const { user, setPage } = useAppStore();
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState<string | null>(null);
+  const [proPrice, setProPrice] = useState(299);
+  const [promoCode, setPromoCode] = useState('');
+  const [promoResult, setPromoResult] = useState<PromoValidation | null>(null);
+  const [promoChecking, setPromoChecking] = useState(false);
+
+  useEffect(() => {
+    getPaymentConfig()
+      .then(c => setProPrice(c.price))
+      .catch(() => {});
+  }, []);
+
+  const handleApplyPromo = async () => {
+    const code = promoCode.trim();
+    if (!code) return;
+    setPromoChecking(true);
+    setPromoResult(null);
+    try {
+      const result = await validatePromoCode(code);
+      setPromoResult(result);
+    } catch {
+      setPromoResult({ valid: false, error: 'Ошибка проверки кода' });
+    } finally {
+      setPromoChecking(false);
+    }
+  };
+
+  const finalPrice = promoResult?.valid && promoResult.final_price != null
+    ? promoResult.final_price
+    : proPrice;
 
   const handlePay = async () => {
     setPaying(true);
     setPayError(null);
     try {
-      const { payment_url } = await createPayment();
+      const appliedCode = promoResult?.valid ? promoCode.trim() : undefined;
+      const { payment_url } = await createPayment(appliedCode);
       // Открываем страницу T-Bank через MAX Bridge или браузер
       const tg = (window as any).WebApp;
       if (tg?.openLink) {
@@ -93,7 +123,16 @@ export function PricingPage() {
           <div className="pricing-card pricing-card--pro">
             <div className="pricing-card__header">
               <div className="pricing-card__name">PRO</div>
-              <div className="pricing-card__price">299 ₽</div>
+              <div className="pricing-card__price">
+                {promoResult?.valid ? (
+                  <>
+                    <span className="promo-price-original">{proPrice} ₽</span>{' '}
+                    <span className="promo-price-final">{finalPrice} ₽</span>
+                  </>
+                ) : (
+                  <>{proPrice} ₽</>
+                )}
+              </div>
               <div className="pricing-card__period">в месяц</div>
             </div>
             <ul className="pricing-card__features">
@@ -108,12 +147,41 @@ export function PricingPage() {
               </div>
             ) : (
               <>
+                {/* Поле промо-кода */}
+                <div className="promo-input-row">
+                  <input
+                    className="admin-settings__input"
+                    placeholder="Промо-код"
+                    value={promoCode}
+                    onChange={e => {
+                      setPromoCode(e.target.value.toUpperCase());
+                      setPromoResult(null);
+                    }}
+                    onKeyDown={e => e.key === 'Enter' && handleApplyPromo()}
+                    style={{ flex: 1, fontSize: 14, padding: '8px 12px' }}
+                  />
+                  <button
+                    className="btn btn--ghost btn--sm"
+                    onClick={handleApplyPromo}
+                    disabled={promoChecking || !promoCode.trim()}
+                    style={{ flexShrink: 0 }}
+                  >
+                    {promoChecking ? '...' : 'Применить'}
+                  </button>
+                </div>
+                {promoResult && (
+                  promoResult.valid
+                    ? <div className="promo-price-final" style={{ fontSize: 13 }}>
+                        Скидка {promoResult.discount_percent}% применена
+                      </div>
+                    : <div className="promo-error">{promoResult.error}</div>
+                )}
                 <button
                   className="btn btn--primary"
                   onClick={handlePay}
                   disabled={paying}
                 >
-                  {paying ? 'Открываю...' : 'Оформить PRO — 299 ₽'}
+                  {paying ? 'Открываю...' : `Оформить PRO — ${finalPrice} ₽`}
                 </button>
                 {payError && (
                   <div className="alert alert--error" style={{ marginTop: 8 }}>

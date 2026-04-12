@@ -40,16 +40,23 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
       return;
     }
 
-    if (!channel.comments_enabled) {
-      logger.debug('Комментарии отключены для канала, пропускаем', { chatId });
+    // Проверяем: если и комментарии и реакции выключены — нечего добавлять
+    const reactions: string[] = channel.post_reactions ?? [];
+    if (!channel.comments_enabled && reactions.length === 0) {
+      logger.debug('Комментарии и реакции отключены, пропускаем', { chatId });
       return;
     }
 
-    // 2. Сохранить пост в БД
+    // 2. Сохранить пост в БД (полный текст + медиа-вложения для корректного обновления кнопки)
+    const originalAttachments = (message.body.attachments ?? []) as Record<string, unknown>[];
+    const mediaAttachments = originalAttachments.filter(a => a?.type !== 'inline_keyboard');
     const post = await db.createPost({
       channel_id: channel.id,
       max_message_id: messageId,
-      text_preview: text.slice(0, 200),
+      text_preview: text,                 // полный текст — нужен при обновлении кнопки
+      attachments_json: mediaAttachments, // медиа-вложения сохраняем отдельно
+      comments_enabled: channel.comments_enabled, // фиксируем на момент создания
+      post_reactions: reactions,          // фиксируем на момент создания — изменение настройки не трогает старые посты
     });
 
     if (!post) {
@@ -57,9 +64,29 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
       return;
     }
 
-    // 3. Прикрепить кнопку «💬 Комментарии (0)» к оригинальному посту
-    const button = maxClient.buildCommentsButton(post.id, 0);
-    await maxClient.editMessage(messageId, { attachments: [button] });
+    // Инициализируем счётчики реакций, если настроены
+    if (reactions.length > 0) {
+      await db.initPostReactions(post.id, reactions);
+    }
+
+    // 3. Прикрепить клавиатуру к оригинальному посту
+    const reactionButtons = reactions.map(e => ({ emoji: e, count: 0 }));
+    const keyboard = maxClient.buildPostKeyboard(post.id, 0, reactionButtons, channel.comments_enabled);
+    const keyboardAttachments = keyboard ? [keyboard] : [];
+
+    logger.info('Прикрепляем кнопку к посту', {
+      messageId,
+      postId: post.id,
+      commentsEnabled: channel.comments_enabled,
+      reactionsCount: reactionButtons.length,
+      mediaCount: mediaAttachments.length,
+      hasKeyboard: keyboard !== null,
+    });
+
+    await maxClient.editMessage(messageId, {
+      text: text || undefined,
+      attachments: [...mediaAttachments, ...keyboardAttachments],
+    });
 
     await db.pool.query(
       'UPDATE channels SET post_count = post_count + 1 WHERE id = $1',

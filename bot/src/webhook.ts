@@ -9,6 +9,7 @@ import { onBotAdded } from './handlers/onBotAdded.js';
 import { onBotRemoved } from './handlers/onBotRemoved.js';
 import { onBotStarted } from './handlers/onBotStarted.js';
 import { onCallback } from './handlers/onCallback.js';
+import { updateSinglePostCounter } from './jobs/updateCounters.js';
 import type { WebhookUpdate } from '../../shared/types.js';
 
 const app = express();
@@ -58,6 +59,18 @@ app.post('/webhook', async (req, res) => {
     }
   } catch (err) {
     logger.error('Необработанная ошибка в webhook', { updateType: update.update_type, err });
+  }
+});
+
+// Внутренний эндпоинт — мгновенно обновить кнопку поста (вызывается из backend при закрытии Mini App)
+// Доступен только внутри Docker-сети (не проксируется nginx)
+// Внутренний эндпоинт — мгновенно обновить кнопку поста (вызывается из backend при закрытии Mini App)
+// Доступен только внутри Docker-сети (не проксируется nginx)
+app.post('/internal/update-post/:postId', (req, res) => {
+  res.sendStatus(204);
+  const postId = parseInt(req.params.postId, 10);
+  if (!isNaN(postId)) {
+    updateSinglePostCounter(postId); // синхронный дебаунс, ошибки внутри
   }
 });
 

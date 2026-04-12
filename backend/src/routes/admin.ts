@@ -271,3 +271,164 @@ adminRouter.delete('/channels/:id', requireAuth, requireAdminUser, async (req, r
     client.release();
   }
 });
+
+// ─── GET /api/admin/settings ─────────────────────────────────────────────────
+// Получить настройки платформы (цена и длительность PRO)
+
+adminRouter.get('/settings', requireAuth, requireAdminUser, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT key, value FROM app_settings WHERE key IN ('pro_price_rub', 'pro_days')`
+    );
+    const settings = Object.fromEntries(
+      rows.map((r: { key: string; value: string }) => [r.key, r.value])
+    );
+
+    const pro_price_rub = settings.pro_price_rub ? parseInt(settings.pro_price_rub, 10) : 299;
+    const pro_days      = settings.pro_days      ? parseInt(settings.pro_days, 10)      : 30;
+
+    res.json({ pro_price_rub, pro_days });
+  } catch (err) {
+    console.error('GET /api/admin/settings error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ─── GET /api/admin/payments ─────────────────────────────────────────────────
+
+adminRouter.get('/payments', requireAuth, requireAdminUser, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT p.id, p.amount_rub, p.status, p.promo_code, p.discount_percent, p.created_at,
+             u.name AS user_name, u.max_user_id
+      FROM payments p
+      LEFT JOIN users u ON u.id = p.user_id
+      ORDER BY p.created_at DESC
+      LIMIT 200
+    `);
+    res.json(rows.map(r => ({
+      ...r,
+      id: Number(r.id),
+      max_user_id: r.max_user_id ? Number(r.max_user_id) : null,
+    })));
+  } catch (err) {
+    console.error('GET /api/admin/payments error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ─── GET /api/admin/promo-codes ───────────────────────────────────────────────
+
+adminRouter.get('/promo-codes', requireAuth, requireAdminUser, async (_req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM promo_codes ORDER BY created_at DESC');
+    res.json(rows.map(r => ({ ...r, id: Number(r.id) })));
+  } catch (err) {
+    console.error('GET /api/admin/promo-codes error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ─── POST /api/admin/promo-codes ─────────────────────────────────────────────
+
+adminRouter.post('/promo-codes', requireAuth, requireAdminUser, async (req, res) => {
+  const { code, discount_percent, max_uses, expires_at } = req.body as {
+    code?: string;
+    discount_percent?: number;
+    max_uses?: number | null;
+    expires_at?: string | null;
+  };
+
+  if (!code || typeof code !== 'string' || code.trim() === '') {
+    res.status(400).json({ error: 'Нужен code' }); return;
+  }
+  if (!discount_percent || !Number.isInteger(discount_percent) || discount_percent < 1 || discount_percent > 100) {
+    res.status(400).json({ error: 'discount_percent должен быть от 1 до 100' }); return;
+  }
+  if (max_uses !== undefined && max_uses !== null && (!Number.isInteger(max_uses) || max_uses < 1)) {
+    res.status(400).json({ error: 'max_uses должен быть целым числом > 0' }); return;
+  }
+
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO promo_codes (code, discount_percent, max_uses, expires_at)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [code.trim().toUpperCase(), discount_percent, max_uses ?? null, expires_at ?? null]
+    );
+    res.status(201).json({ ...rows[0], id: Number(rows[0].id) });
+  } catch (err: any) {
+    if (err.code === '23505') {
+      res.status(409).json({ error: 'Код уже существует' }); return;
+    }
+    console.error('POST /api/admin/promo-codes error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ─── DELETE /api/admin/promo-codes/:code ─────────────────────────────────────
+
+adminRouter.delete('/promo-codes/:code', requireAuth, requireAdminUser, async (req, res) => {
+  const code = req.params.code;
+  try {
+    const { rowCount } = await pool.query('DELETE FROM promo_codes WHERE code = $1', [code]);
+    if (!rowCount) { res.status(404).json({ error: 'Код не найден' }); return; }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE /api/admin/promo-codes error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ─── PATCH /api/admin/settings ───────────────────────────────────────────────
+// Обновить настройки платформы (цена и длительность PRO)
+
+adminRouter.patch('/settings', requireAuth, requireAdminUser, async (req, res) => {
+  const { pro_price_rub, pro_days } = req.body as { pro_price_rub?: number; pro_days?: number };
+
+  // Валидация
+  if (pro_price_rub !== undefined) {
+    if (!Number.isInteger(pro_price_rub) || pro_price_rub < 1) {
+      res.status(400).json({ error: 'pro_price_rub должно быть целым числом >= 1' });
+      return;
+    }
+  }
+  if (pro_days !== undefined) {
+    if (!Number.isInteger(pro_days) || pro_days < 1 || pro_days > 365) {
+      res.status(400).json({ error: 'pro_days должно быть целым числом от 1 до 365' });
+      return;
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // UPSERT для каждого ключа
+    if (pro_price_rub !== undefined) {
+      await client.query(
+        `INSERT INTO app_settings (key, value)
+         VALUES ('pro_price_rub', $1)
+         ON CONFLICT (key) DO UPDATE SET value = $1`,
+        [String(pro_price_rub)]
+      );
+    }
+    if (pro_days !== undefined) {
+      await client.query(
+        `INSERT INTO app_settings (key, value)
+         VALUES ('pro_days', $1)
+         ON CONFLICT (key) DO UPDATE SET value = $1`,
+        [String(pro_days)]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('PATCH /api/admin/settings error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  } finally {
+    client.release();
+  }
+});

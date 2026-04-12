@@ -50,10 +50,72 @@ async function tbankRequest<T>(path: string, body: Record<string, unknown>): Pro
   return data;
 }
 
+// ─── GET /api/payments/config ────────────────────────────────────
+// Публичный эндпоинт — возвращает актуальную цену и длительность PRO
+
+paymentsRouter.get('/config', async (_req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT key, value FROM app_settings WHERE key IN ('pro_price_rub', 'pro_days')`
+    );
+    const settings = Object.fromEntries(
+      rows.map((r: { key: string; value: string }) => [r.key, r.value])
+    );
+
+    const price = settings.pro_price_rub ? parseInt(settings.pro_price_rub, 10) : PRO_PRICE;
+    const days  = settings.pro_days      ? parseInt(settings.pro_days, 10)      : PRO_DAYS;
+
+    res.json({ price, days });
+  } catch (err) {
+    console.error('GET /api/payments/config error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ─── POST /api/payments/validate-promo ──────────────────────────
+// Публичный роут — проверить промо-код и получить финальную цену
+
+paymentsRouter.post('/validate-promo', async (req, res) => {
+  const { code } = req.body as { code?: string };
+  if (!code || typeof code !== 'string' || code.trim() === '') {
+    res.status(400).json({ valid: false, error: 'Нужен code' }); return;
+  }
+
+  try {
+    const { rows: priceRows } = await pool.query(
+      `SELECT key, value FROM app_settings WHERE key IN ('pro_price_rub', 'pro_days')`
+    );
+    const ps = Object.fromEntries(priceRows.map((r: { key: string; value: string }) => [r.key, r.value]));
+    const basePrice = ps.pro_price_rub ? parseInt(ps.pro_price_rub, 10) : PRO_PRICE;
+
+    const { rows } = await pool.query(
+      `SELECT * FROM promo_codes WHERE code = $1`,
+      [code.trim().toUpperCase()]
+    );
+
+    if (!rows[0]) { res.json({ valid: false, error: 'Код не найден' }); return; }
+    const promo = rows[0];
+
+    if (promo.expires_at && new Date(promo.expires_at) < new Date()) {
+      res.json({ valid: false, error: 'Код истёк' }); return;
+    }
+    if (promo.max_uses !== null && promo.used_count >= promo.max_uses) {
+      res.json({ valid: false, error: 'Код исчерпан' }); return;
+    }
+
+    const finalPrice = Math.round(basePrice * (1 - promo.discount_percent / 100));
+    res.json({ valid: true, discount_percent: promo.discount_percent, final_price: finalPrice });
+  } catch (err) {
+    console.error('POST /api/payments/validate-promo error:', err);
+    res.status(500).json({ valid: false, error: 'Ошибка сервера' });
+  }
+});
+
 // ─── POST /api/payments/create ──────────────────────────────────
 
 paymentsRouter.post('/create', requireAuth, async (req, res) => {
   const maxUser = req.maxUser!;
+  const { promo_code } = req.body as { promo_code?: string };
 
   try {
     getTerminalKey(); // бросит если ключа нет
@@ -62,30 +124,64 @@ paymentsRouter.post('/create', requireAuth, async (req, res) => {
     return;
   }
 
+  const client = await pool.connect();
   try {
-    const { rows } = await pool.query(
+    await client.query('BEGIN');
+
+    const { rows } = await client.query(
       'SELECT id FROM users WHERE max_user_id = $1',
       [maxUser.user_id]
     );
-    if (!rows[0]) { res.status(404).json({ error: 'Пользователь не найден' }); return; }
+    if (!rows[0]) { await client.query('ROLLBACK'); res.status(404).json({ error: 'Пользователь не найден' }); return; }
     const userId: number = rows[0].id;
 
+    // Получаем актуальную цену и длительность из БД
+    const { rows: priceRows } = await client.query(
+      `SELECT key, value FROM app_settings WHERE key IN ('pro_price_rub', 'pro_days')`
+    );
+    const sett = Object.fromEntries(priceRows.map((r: { key: string; value: string }) => [r.key, r.value]));
+    const basePrice = sett.pro_price_rub ? parseInt(sett.pro_price_rub, 10) : PRO_PRICE;
+    const days      = sett.pro_days      ? parseInt(sett.pro_days, 10)      : PRO_DAYS;
+
+    // Обрабатываем промо-код
+    let finalPrice = basePrice;
+    let promoId: number | null = null;
+    let discountPct: number | null = null;
+    let appliedCode: string | null = null;
+
+    if (promo_code) {
+      const { rows: promoRows } = await client.query(
+        `SELECT * FROM promo_codes WHERE code = $1 FOR UPDATE`,
+        [promo_code.trim().toUpperCase()]
+      );
+      const promo = promoRows[0];
+      if (promo &&
+          !(promo.expires_at && new Date(promo.expires_at) < new Date()) &&
+          !(promo.max_uses !== null && promo.used_count >= promo.max_uses)) {
+        finalPrice = Math.round(basePrice * (1 - promo.discount_percent / 100));
+        promoId    = Number(promo.id);
+        discountPct = promo.discount_percent;
+        appliedCode = promo.code;
+        // used_count инкрементируем только при CONFIRMED (в webhook), не при pending
+      }
+    }
+
     // Создаём запись платежа в БД
-    const { rows: payRows } = await pool.query(
-      `INSERT INTO payments (user_id, amount_rub, plan, status)
-       VALUES ($1, $2, 'pro', 'pending')
+    const { rows: payRows } = await client.query(
+      `INSERT INTO payments (user_id, amount_rub, plan, status, promo_code, discount_percent)
+       VALUES ($1, $2, 'pro', 'pending', $3, $4)
        RETURNING id`,
-      [userId, PRO_PRICE]
+      [userId, finalPrice, appliedCode, discountPct]
     );
     const paymentId: number = payRows[0].id;
 
-    const miniAppUrl = process.env.MINI_APP_URL ?? 'https://sushi-house-39.online';
+    const miniAppUrl = process.env.MINI_APP_URL ?? 'https://comment-max.ru';
 
     const reqBody = {
       TerminalKey:     getTerminalKey(),
-      Amount:          PRO_PRICE * 100,                       // копейки
+      Amount:          finalPrice * 100,                      // копейки
       OrderId:         String(paymentId),
-      Description:     `PRO подписка на ${PRO_DAYS} дней — Комментарии в ПОСТ`,
+      Description:     `PRO подписка на ${days} дней — Комментарии в ПОСТ`,
       NotificationURL: `${miniAppUrl}/api/payments/webhook`,
       SuccessURL:      `${miniAppUrl}/?payment=success`,
       FailURL:         `${miniAppUrl}/?payment=fail`,
@@ -98,18 +194,23 @@ paymentsRouter.post('/create', requireAuth, async (req, res) => {
     }>('/Init', reqBody);
 
     // Сохраняем внешний ID платежа
-    await pool.query(
+    await client.query(
       'UPDATE payments SET tbank_payment_id = $1 WHERE id = $2',
       [result.PaymentId, paymentId]
     );
+
+    await client.query('COMMIT');
 
     res.json({
       payment_id:   paymentId,
       payment_url:  result.PaymentURL,
     });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('POST /api/payments/create error:', err);
     res.status(500).json({ error: 'Ошибка при создании платежа' });
+  } finally {
+    client.release();
   }
 });
 
@@ -170,9 +271,18 @@ paymentsRouter.post('/webhook', async (req, res) => {
         `UPDATE users
             SET plan         = 'pro',
                 plan_expires = GREATEST(COALESCE(plan_expires, NOW()), NOW())
-                              + INTERVAL '${PRO_DAYS} days'
+                              + (INTERVAL '1 day' * $2)
           WHERE id = $1`,
-        [userId]
+        [userId, PRO_DAYS]
+      );
+
+      // Инкрементируем счётчик промо-кода (если применялся) — только при CONFIRMED
+      await pool.query(
+        `UPDATE promo_codes pc
+           SET used_count = used_count + 1
+          FROM payments p
+         WHERE p.id = $1 AND p.promo_code IS NOT NULL AND pc.code = p.promo_code`,
+        [payId]
       );
 
       // Бонус рефереру: +30 дней PRO + уведомление в MAX
@@ -180,7 +290,7 @@ paymentsRouter.post('/webhook', async (req, res) => {
         `UPDATE users
             SET plan         = 'pro',
                 plan_expires = GREATEST(COALESCE(plan_expires, NOW()), NOW())
-                              + INTERVAL '30 days'
+                              + (INTERVAL '1 day' * 30)
           WHERE id = (SELECT referred_by FROM users WHERE id = $1)
           RETURNING max_user_id`,
         [userId]
@@ -191,7 +301,7 @@ paymentsRouter.post('/webhook', async (req, res) => {
         if (botToken) {
           fetch(`https://platform-api.max.ru/messages?user_id=${refRows[0].max_user_id}`, {
             method: 'POST',
-            headers: { 'Authorization': `Bearer ${botToken}`, 'Content-Type': 'application/json' },
+            headers: { 'Authorization': botToken, 'Content-Type': 'application/json' },
             body: JSON.stringify({
               text: '🎉 По вашей реферальной ссылке оформили **PRO**!\n\n+30 дней начислено на ваш аккаунт.',
               format: 'markdown',

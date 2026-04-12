@@ -44,7 +44,17 @@
       "Bash(git add:*)",
       "Bash(git push:*)",
       "Bash(expect -v)",
-      "Bash(set PYTHONUTF8=1)"
+      "Bash(set PYTHONUTF8=1)",
+      "Bash(npm test:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "WebSearch",
+      "WebFetch(domain:telegram.org)",
+      "WebFetch(domain:ppc.world)",
+      "Bash(2>&1)",
+      "Bash(wrangler deploy:*)",
+      "Bash(ssh-keygen -l -f ~/.ssh/id_ed25519.pub)",
+      "Bash(awk '{print $2}')"
     ]
   }
 }

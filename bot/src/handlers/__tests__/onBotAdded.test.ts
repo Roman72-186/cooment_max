@@ -19,6 +19,10 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { info: vi.fn(), debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock('../../utils/config.js', () => ({
+  config: { maxBotUrl: 'https://max.ru/test_bot', maxApiRateLimit: 25 },
+}));
+
 import { onBotAdded } from '../onBotAdded.js';
 import * as maxClient from '../../api/maxClient.js';
 import * as db from '../../db/db.js';
@@ -95,7 +99,8 @@ describe('onBotAdded', () => {
     await onBotAdded(makeUpdate() as any);
     expect(maxClient.sendMessageToUser).toHaveBeenCalledWith(
       200,
-      expect.stringContaining('Мой канал')
+      expect.stringContaining('Мой канал'),
+      expect.anything()  // кнопка «Открыть панель управления»
     );
   });
 

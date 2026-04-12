@@ -8,6 +8,7 @@ import { startWebhookServer } from './webhook.js';
 import { startPolling } from './polling.js';
 import { startCounterUpdater } from './jobs/updateCounters.js';
 import { startAnalyticsAggregator } from './jobs/analyticsDaily.js';
+import { startNotificationSender } from './jobs/sendNotifications.js';
 import { pool } from './db/db.js';
 
 async function main(): Promise<void> {
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
   // Запускаем фоновые задачи
   startCounterUpdater();
   startAnalyticsAggregator();
+  startNotificationSender();
 
   if (config.isDev) {
     // Режим разработки: long polling (не требует HTTPS)

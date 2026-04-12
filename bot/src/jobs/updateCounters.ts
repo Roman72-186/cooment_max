@@ -25,6 +25,56 @@ export function startCounterUpdater(): NodeJS.Timer {
   }, INTERVAL_MS);
 }
 
+// Дебаунс: при одновременном закрытии Mini App несколькими пользователями
+// вызовы на один postId схлопываются в один MAX API вызов (как в onCallback.ts)
+const pendingCounterUpdates = new Map<number, ReturnType<typeof setTimeout>>();
+const SINGLE_DEBOUNCE_MS = 500;
+
+// Немедленно обновить кнопку одного поста — вызывается из /internal/update-post/:postId
+export function updateSinglePostCounter(postId: number): void {
+  const existing = pendingCounterUpdates.get(postId);
+  if (existing) clearTimeout(existing);
+
+  pendingCounterUpdates.set(postId, setTimeout(async () => {
+    pendingCounterUpdates.delete(postId);
+    try {
+      const post = await db.getPostById(postId);
+      if (!post?.max_message_id) return;
+
+      const [commentCounts, reactionsByPost] = await Promise.all([
+        db.getBatchCommentCounts([postId]),
+        db.getBatchPostReactions([postId]),
+      ]);
+
+      const count = commentCounts.get(postId) ?? 0;
+      const emojis: string[] = post.post_reactions ?? [];
+      const allReactions = emojis.length > 0 ? (reactionsByPost.get(postId) ?? []) : [];
+      const orderedReactions = allReactions.length > 0
+        ? emojis.map(e => allReactions.find(r => r.emoji === e) ?? { emoji: e, count: 0 })
+        : [];
+      await applyPostUpdate(post, count, orderedReactions);
+    } catch (err) {
+      logger.warn('Ошибка немедленного обновления счётчика', { postId, err });
+    }
+  }, SINGLE_DEBOUNCE_MS));
+}
+
+// Применяет обновлённую клавиатуру и счётчик к одному посту через MAX API + БД
+async function applyPostUpdate(
+  post: NonNullable<Awaited<ReturnType<typeof db.getPostById>>>,
+  count: number,
+  orderedReactions: { emoji: string; count: number }[],
+): Promise<void> {
+  const keyboard = maxClient.buildPostKeyboard(post.id, count, orderedReactions, post.comments_enabled);
+  const mediaAttachments = (post.attachments_json ?? []) as Record<string, unknown>[];
+  const keyboardAttachments = keyboard ? [keyboard] : [];
+  await maxClient.editMessage(post.max_message_id!, {
+    text: post.text_preview || undefined,
+    attachments: [...mediaAttachments, ...keyboardAttachments],
+  });
+  await db.updatePost(post.id, { comment_count: count });
+}
+
 async function updateAllCounters(): Promise<void> {
   const posts = await db.getRecentActivePosts();
 
@@ -32,16 +82,29 @@ async function updateAllCounters(): Promise<void> {
 
   logger.debug(`Обновляем счётчики для ${posts.length} постов`);
 
+  // Два батч-запроса вместо 2×N индивидуальных:
+  // при 100 постах было 200 запросов к БД, стало 2
+  const postIds = posts.map(p => p.id);
+  const [commentCounts, reactionsByPost] = await Promise.all([
+    db.getBatchCommentCounts(postIds),
+    db.getBatchPostReactions(postIds),
+  ]);
+
   for (const post of posts) {
     try {
-      const count = await db.getCommentCount(post.id);
+      const count = commentCounts.get(post.id) ?? 0;
 
-      // Обновляем только если счётчик изменился
-      if (count !== post.comment_count) {
-        const button = maxClient.buildCommentsButton(post.id, count);
-        await maxClient.editMessage(post.max_message_id, { attachments: [button] });
-        await db.updatePost(post.id, { comment_count: count });
-      }
+      // Строим упорядоченный список реакций по снапшоту emoji поста.
+      // Реакции показываем только если пост был инициализирован с ними
+      // (т.е. в post_reaction_counts есть записи для этого поста).
+      const emojis: string[] = post.post_reactions ?? [];
+      // Данные уже в памяти — без дополнительных запросов к БД
+      const allReactions = emojis.length > 0 ? (reactionsByPost.get(post.id) ?? []) : [];
+      // Если нет записей — пост создан до включения реакций; не добавляем кнопки
+      const orderedReactions = allReactions.length > 0
+        ? emojis.map(e => allReactions.find(r => r.emoji === e) ?? { emoji: e, count: 0 })
+        : [];
+      await applyPostUpdate(post, count, orderedReactions);
 
       // Задержка между запросами — соблюдаем rate limit MAX API
       await new Promise((resolve) => setTimeout(resolve, API_DELAY_MS));

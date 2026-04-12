@@ -1,40 +1,36 @@
-// Список комментариев с вложенными ответами
+// Плоский список комментариев — мессенджер-стиль (как Tapbox)
+import React from 'react';
 import type { Comment } from '../api/backend';
 import { CommentCard } from './CommentCard';
 
 interface Props {
   comments: Comment[];
   onDeleted?: (id: number) => void;
+  onRestoreComment?: (comment: Comment) => void;
 }
 
-// Превращает плоский список в дерево (верхний уровень + replies)
-function buildTree(flat: Comment[]): Comment[] {
-  const map = new Map<number, Comment>();
-  const roots: Comment[] = [];
+function formatDateLabel(iso: string): string {
+  const date = new Date(iso);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
 
-  // Инициализируем все узлы с пустыми replies
-  flat.forEach((c) => map.set(c.id, { ...c, replies: [] }));
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
 
-  map.forEach((c) => {
-    if (c.parent_id === null) {
-      roots.push(c);
-    } else {
-      const parent = map.get(c.parent_id);
-      if (parent) {
-        parent.replies!.push(c);
-      } else {
-        roots.push(c);
-      }
-    }
-  });
-
-  return roots;
+  if (sameDay(date, today)) return 'Сегодня';
+  if (sameDay(date, yesterday)) return 'Вчера';
+  return date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 }
 
-export function CommentThread({ comments, onDeleted }: Props) {
-  const tree = buildTree(comments);
+function toDateKey(iso: string): string {
+  return iso.slice(0, 10);
+}
 
-  if (tree.length === 0) {
+export function CommentThread({ comments, onDeleted, onRestoreComment }: Props) {
+  if (comments.length === 0) {
     return (
       <div className="empty-state">
         <span>Пока нет комментариев</span>
@@ -43,11 +39,42 @@ export function CommentThread({ comments, onDeleted }: Props) {
     );
   }
 
+  // Карта id → комментарий для быстрого поиска родителя (цитата)
+  const commentMap = new Map<number, Comment>(comments.map((c) => [c.id, c]));
+
+  const elements: React.ReactNode[] = [];
+  let lastDateKey = '';
+
+  // Плоский рендер — комментарии идут в хронологическом порядке
+  comments.forEach((comment) => {
+    const dateKey = toDateKey(comment.created_at);
+    if (dateKey !== lastDateKey) {
+      lastDateKey = dateKey;
+      elements.push(
+        <div key={`sep-${dateKey}`} className="date-separator">
+          <span>{formatDateLabel(comment.created_at)}</span>
+        </div>
+      );
+    }
+
+    const parentComment = comment.parent_id != null
+      ? commentMap.get(comment.parent_id)
+      : undefined;
+
+    elements.push(
+      <CommentCard
+        key={comment.id}
+        comment={comment}
+        parentComment={parentComment}
+        onDeleted={onDeleted}
+        onRestoreComment={onRestoreComment}
+      />
+    );
+  });
+
   return (
     <div className="comment-thread">
-      {tree.map((comment) => (
-        <CommentCard key={comment.id} comment={comment} depth={0} onDeleted={onDeleted} />
-      ))}
+      {elements}
     </div>
   );
 }

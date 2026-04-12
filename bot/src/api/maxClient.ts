@@ -168,22 +168,62 @@ export async function answerCallback(callbackId: string, text?: string): Promise
   });
 }
 
-// ─── ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ─────────────────────────────────────
+// ─── ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ─────────────────────────────────────
 
-// Собрать inline-кнопку «💬 Комментарии» для прикрепления к посту
+// Собрать inline-клавиатуру с кнопкой комментариев и/или кнопками реакций.
+// Возвращает null если обе функции выключены — тогда attachments без keyboard.
+export function buildPostKeyboard(
+  postId: number,
+  commentCount: number,
+  reactions: Array<{ emoji: string; count: number }> = [],
+  commentsEnabled: boolean = true
+): unknown | null {
+  const buttons: unknown[][] = [];
+
+  // Ряд 1: кнопка комментариев (если включена)
+  if (commentsEnabled) {
+    buttons.push([{
+      type: 'open_app',
+      text: `💬 Комментарии (${commentCount})`,
+      web_app: config.maxBotUrl,   // https://max.ru/id861708697380_bot
+      payload: `post_${postId}`,   // стартовый параметр (max 512 символов)
+    }]);
+  }
+
+  // Ряд 2: кнопки реакций (если есть)
+  if (reactions.length > 0) {
+    buttons.push(reactions.map(r => ({
+      type: 'callback',
+      text: `${r.emoji} ${r.count}`,
+      payload: `react_${postId}_${r.emoji}`,
+    })));
+  }
+
+  // Если кнопок нет вообще — не добавляем keyboard
+  if (buttons.length === 0) return null;
+
+  return { type: 'inline_keyboard', payload: { buttons } };
+}
+
+// Алиас для обратной совместимости
 export function buildCommentsButton(postId: number, count: number): unknown {
-  const label = count === 0 ? '💬 Комментарии' : `💬 Комментарии (${count})`;
-  // web_app — URL бота в MAX (https://max.ru/botname), НЕ Vercel URL.
-  // MAX ищет это значение в своём реестре ссылок (space=TAMTAM).
-  // Vercel URL регистрируется в business.max.ru и открывается автоматически.
+  return buildPostKeyboard(postId, count, [], true)!;
+}
+
+// Кнопка «Открыть комментарии» для уведомлений.
+// Если передан commentId — startapp ведёт на конкретный комментарий (post_X_c_Y).
+export function buildOpenAppButton(postId: number, commentId?: number): unknown {
+  const startapp = commentId != null
+    ? `post_${postId}_c_${commentId}`
+    : `post_${postId}`;
   return {
     type: 'inline_keyboard',
     payload: {
       buttons: [[{
         type: 'open_app',
-        text: label,
-        web_app: config.maxBotUrl,       // https://max.ru/id861708697380_bot
-        payload: `post_${postId}`,        // стартовый параметр (max 512 символов)
+        text: '💬 Открыть комментарии',
+        web_app: config.maxBotUrl,
+        payload: startapp,
       }]],
     },
   };

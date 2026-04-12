@@ -19,6 +19,19 @@ declare global {
   }
 }
 
+// HMAC-секрет для валидации initData — кешируется по значению токена.
+// MAX_BOT_TOKEN не меняется в рантайме, но кешируем по ключу на случай тестов,
+// где env-переменная может подменяться между кейсами.
+const _secretCache = new Map<string, Buffer>();
+function getSecret(token: string): Buffer {
+  let secret = _secretCache.get(token);
+  if (!secret) {
+    secret = crypto.createHmac('sha256', 'WebAppData').update(token).digest();
+    _secretCache.set(token, secret);
+  }
+  return secret;
+}
+
 function validateInitData(initData: string, token: string): MaxUser | null {
   try {
     const params = new URLSearchParams(initData);
@@ -32,7 +45,7 @@ function validateInitData(initData: string, token: string): MaxUser | null {
       .map(([k, v]) => `${k}=${v}`)
       .join('\n');
 
-    const secret = crypto.createHmac('sha256', 'WebAppData').update(token).digest();
+    const secret = getSecret(token);
     const expected = crypto.createHmac('sha256', secret).update(checkStr).digest('hex');
 
     if (expected !== hash) return null;

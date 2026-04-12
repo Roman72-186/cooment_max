@@ -3,6 +3,7 @@
 
 import { sendMessageToUser } from '../api/maxClient.js';
 import * as db from '../db/db.js';
+import { pool } from '../db/db.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../utils/config.js';
 import type { WebhookUpdate } from '../../../shared/types.js';
@@ -34,7 +35,9 @@ export async function onBotStarted(update: WebhookUpdate): Promise<void> {
 
   if (!userId) return;
 
-  const refMatch = startParam.match(/^ref_([A-Z0-9]+)$/i);
+  const refMatch       = startParam.match(/^ref_([A-Z0-9]+)$/i);
+  const subscribeMatch = startParam.match(/^subscribe_(\d+)$/);
+  const isNotifySetup  = startParam === 'notify';
   logger.info('Бот запущен пользователем', { userId, startParam });
 
   try {
@@ -43,6 +46,33 @@ export async function onBotStarted(update: WebhookUpdate): Promise<void> {
       name: userName,
       username: undefined,
     });
+
+    // Пользователь нажал «Включить уведомления об ответах» в Mini App
+    if (isNotifySetup) {
+      await sendMessageToUser(
+        userId,
+        `🔔 Готово! Теперь я буду присылать вам уведомление, когда кто-то ответит на ваш комментарий.`,
+        []
+      );
+      return;
+    }
+
+    // Обработка подписки на уведомления по посту
+    if (subscribeMatch) {
+      const postId = Number(subscribeMatch[1]);
+      await pool.query(
+        `INSERT INTO post_subscriptions (post_id, user_max_id)
+         VALUES ($1, $2)
+         ON CONFLICT (post_id, user_max_id) DO NOTHING`,
+        [postId, userId]
+      );
+      await sendMessageToUser(
+        userId,
+        `🔔 Уведомления включены!\nКогда под этим постом появятся новые комментарии — я сообщу вам.`,
+        []
+      );
+      return;
+    }
 
     if (refMatch && !user.referred_by) {
       await linkReferral(user.id, refMatch[1]);

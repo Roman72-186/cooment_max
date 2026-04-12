@@ -10,6 +10,7 @@ import { AnalyticsPage } from './pages/AnalyticsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PricingPage } from './pages/PricingPage';
 import { AdminPage } from './pages/AdminPage';
+import { InboxPage } from './pages/InboxPage';
 
 export function App() {
   const { page, setPage, setUser } = useAppStore();
@@ -19,11 +20,14 @@ export function App() {
 
     const startParam = getStartParam();
 
-    // Быстрый путь: открыт пост с комментариями — не нужно грузить юзера
+    // Быстрый путь: открыт пост с комментариями.
+    // Формат: post_<id> или post_<id>_c_<commentId> (deep link на конкретный комментарий)
     if (startParam?.startsWith('post_')) {
-      const postId = parseInt(startParam.replace('post_', ''), 10);
-      if (!isNaN(postId)) {
-        setPage({ id: 'comments', postId });
+      const match = startParam.match(/^post_(\d+)(?:_c_(\d+))?$/);
+      if (match) {
+        const postId = parseInt(match[1], 10);
+        const highlightCommentId = match[2] ? parseInt(match[2], 10) : undefined;
+        setPage({ id: 'comments', postId, highlightCommentId });
         return;
       }
     }
@@ -52,6 +56,12 @@ export function App() {
           return;
         }
 
+        // inbox → агрегатор комментариев
+        if (startParam === 'inbox') {
+          setPage({ id: 'inbox' });
+          return;
+        }
+
         // Администратор — сразу в панель управления
         if (user.is_admin) {
           setPage({ id: 'admin' });
@@ -66,8 +76,9 @@ export function App() {
         }
       })
       .catch(() => {
-        // Не удалось загрузить юзера — показываем онбординг
-        setPage({ id: 'onboarding' });
+        // Не удалось загрузить юзера — показываем экран ошибки с кнопкой retry
+        // (онбординг НЕ показываем — это может быть временный сбой при перезапуске backend)
+        setPage({ id: 'error' });
       });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -87,12 +98,32 @@ export function App() {
       showFooter = false;
       break;
 
+    case 'error':
+      content = (
+        <div className="page page--center" style={{ gap: 16, padding: 32, textAlign: 'center' }}>
+          <div style={{ fontSize: 40 }}>⚠️</div>
+          <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
+            Не удалось загрузить данные.<br />Возможно, сервис временно недоступен.
+          </p>
+          <button
+            className="btn btn--primary"
+            onClick={() => window.location.reload()}
+            style={{ marginTop: 8 }}
+          >
+            Попробовать снова
+          </button>
+        </div>
+      );
+      showFooter = false;
+      break;
+
     case 'comments':
-      content = <CommentsPage postId={page.postId} />;
+      content = <CommentsPage postId={page.postId} highlightCommentId={page.highlightCommentId} />;
       showFooter = false;
       break;
 
     case 'admin':       content = <AdminPage />;                            break;
+    case 'inbox':       content = <InboxPage channelId={page.channelId} channelName={page.channelName} />; break;
     case 'onboarding':  content = <OnboardingPage />;                      break;
     case 'dashboard':   content = <DashboardPage />;                       break;
     case 'analytics':   content = <AnalyticsPage channelId={page.channelId} />; break;

@@ -24,7 +24,7 @@ export const config = {
   // Redis
   redisUrl:      requireEnv('REDIS_URL'),
 
-  // Mini App (Vercel URL — регистрируется в business.max.ru)
+  // Mini App (URL на VPS — регистрируется в business.max.ru)
   miniAppUrl:    optionalEnv('MINI_APP_URL', ''),
   // URL бота в MAX — используется в поле web_app кнопки open_app
   maxBotUrl:     optionalEnv('MAX_BOT_URL', ''),
