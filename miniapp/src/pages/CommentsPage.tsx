@@ -6,6 +6,7 @@ import { getComments, recordView, getUserMe, updateReplyNotifications, refreshPo
 import type { Comment } from '../api/backend';
 import { CommentThread } from '../components/CommentThread';
 import { CommentInput } from '../components/CommentInput';
+import { PollWidget } from '../components/PollWidget';
 import { expand } from '../bridge/maxBridge';
 
 const BOT_URL = 'https://max.ru/id861708697380_2_bot';
@@ -160,9 +161,6 @@ export function CommentsPage({ postId, highlightCommentId }: Props) {
   return (
     <div className="page">
       <header className="page-header">
-        <button className="btn-close" onClick={handleClose} aria-label="Закрыть">
-          ✕
-        </button>
         <h1 className="page-title">Комментарии</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span className="comment-count">{comments.length}</span>
@@ -196,6 +194,7 @@ export function CommentsPage({ postId, highlightCommentId }: Props) {
       )}
 
       <main ref={contentRef} className="page-content">
+        <PollWidget postId={postId} />
         {loading && comments.length === 0 ? (
           <div className="skeleton-list">
             {[1, 2, 3].map((i) => (

@@ -97,6 +97,27 @@ export async function getPost(postId: number): Promise<Post | null> {
   }
 }
 
+// Получить результаты опроса поста.
+// Возвращает null если у поста нет опроса.
+export async function getPollResults(postId: number): Promise<{
+  question: string;
+  options: Array<{ text: string; count: number; percent: number }>;
+  total_votes: number;
+  voted_option: number | null;
+} | null> {
+  try {
+    const { data } = await api.get<{ poll: {
+      question: string;
+      options: Array<{ text: string; count: number; percent: number }>;
+      total_votes: number;
+      voted_option: number | null;
+    } | null }>(`/api/polls/${postId}/results`);
+    return data.poll;
+  } catch {
+    return null;
+  }
+}
+
 // Зафиксировать просмотр поста (открытие раздела комментариев)
 export async function recordView(postId: number): Promise<void> {
   try {

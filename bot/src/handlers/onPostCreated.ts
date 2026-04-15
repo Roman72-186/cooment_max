@@ -10,6 +10,31 @@ import * as db from '../db/db.js';
 import { logger } from '../utils/logger.js';
 import type { WebhookUpdate, Channel } from '../../../shared/types.js';
 
+// Разобрать #poll из текста поста.
+// Формат:
+//   #poll Какой контент вам нравится?
+//   🅰️ Вариант первый
+//   🅱️ Вариант второй
+// Возвращает null если тег не найден или вариантов меньше 2 / больше 5.
+function parsePoll(text: string): { question: string; options: string[] } | null {
+  const pollMatch = text.match(/#poll[^\S\r\n]+([^\n\r]+)/i);
+  if (!pollMatch) return null;
+
+  const question = pollMatch[1].trim();
+  if (!question) return null;
+
+  // Всё после строки с #poll — кандидаты в варианты
+  const afterPoll = text.slice(text.indexOf(pollMatch[0]) + pollMatch[0].length);
+  const options = afterPoll
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line.length > 0);
+
+  if (options.length < 2 || options.length > 5) return null;
+
+  return { question, options };
+}
+
 export async function onPostCreated(update: WebhookUpdate): Promise<void> {
   const message = update.message;
   if (!message) return;
@@ -48,7 +73,7 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
     }
 
     // 2. Сохранить пост в БД (полный текст + медиа-вложения для корректного обновления кнопки)
-    const originalAttachments = (message.body.attachments ?? []) as Record<string, unknown>[];
+    const originalAttachments = (message.body.attachments ?? []) as unknown as Record<string, unknown>[];
     const mediaAttachments = originalAttachments.filter(a => a?.type !== 'inline_keyboard');
     const post = await db.createPost({
       channel_id: channel.id,
@@ -69,9 +94,34 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
       await db.initPostReactions(post.id, reactions);
     }
 
-    // 3. Прикрепить клавиатуру к оригинальному посту
+    // 3. Разобрать #poll из текста и создать опрос в БД (если есть)
+    const pollData = parsePoll(text);
+    let pollButtons: unknown[][] = [];
+    if (pollData) {
+      const poll = await db.createPoll(post.id, pollData.question, pollData.options);
+      if (poll) {
+        const zeroCounts = pollData.options.map(() => 0);
+        pollButtons = maxClient.buildPollButtons(post.id, pollData.options, zeroCounts);
+        logger.info('Опрос создан для поста', {
+          postId: post.id,
+          pollId: poll.id,
+          question: pollData.question,
+          optionsCount: pollData.options.length,
+        });
+      }
+    }
+
+    // 4. Прикрепить клавиатуру к оригинальному посту
+    // Порядок рядов: [Comments] → [варианты опроса] → [реакции]
     const reactionButtons = reactions.map(e => ({ emoji: e, count: 0 }));
-    const keyboard = maxClient.buildPostKeyboard(post.id, 0, reactionButtons, channel.comments_enabled);
+    const keyboard = maxClient.buildPostKeyboard(
+      post.id,
+      0,
+      reactionButtons,
+      channel.comments_enabled,
+      undefined,
+      pollButtons,
+    );
     const keyboardAttachments = keyboard ? [keyboard] : [];
 
     logger.info('Прикрепляем кнопку к посту', {

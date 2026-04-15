@@ -88,8 +88,10 @@ export async function sendMessage(
 }
 
 // Отправить сообщение пользователю напрямую (user_id — query param согласно MAX API)
+// userId принимает string или number: BIGINT из PostgreSQL лучше передавать как string
+// чтобы избежать потери точности при ID > 2^53 (Number.MAX_SAFE_INTEGER)
 export async function sendMessageToUser(
-  userId: number,
+  userId: number | string,
   text: string,
   attachments?: unknown[]
 ): Promise<MaxSendMessageResult> {
@@ -171,12 +173,15 @@ export async function answerCallback(callbackId: string, text?: string): Promise
 // ─── ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ─────────────────────────────────────
 
 // Собрать inline-клавиатуру с кнопкой комментариев и/или кнопками реакций.
+// selectedEmoji — emoji текущего пользователя (для оптимистичного подсвечивания).
 // Возвращает null если обе функции выключены — тогда attachments без keyboard.
 export function buildPostKeyboard(
   postId: number,
   commentCount: number,
   reactions: Array<{ emoji: string; count: number }> = [],
-  commentsEnabled: boolean = true
+  commentsEnabled: boolean = true,
+  selectedEmoji?: string,
+  pollRows: unknown[][] = [],
 ): unknown | null {
   const buttons: unknown[][] = [];
 
@@ -190,11 +195,19 @@ export function buildPostKeyboard(
     }]);
   }
 
-  // Ряд 2: кнопки реакций (если есть)
+  // Ряды вариантов опроса (если есть) — каждый вариант на отдельном ряду
+  for (const row of pollRows) {
+    buttons.push(row as unknown[]);
+  }
+
+  // Последний ряд: кнопки реакций (если есть)
+  // Выбранная реакция выделяется маркером «·» перед emoji
   if (reactions.length > 0) {
     buttons.push(reactions.map(r => ({
       type: 'callback',
-      text: `${r.emoji} ${r.count}`,
+      text: selectedEmoji === r.emoji
+        ? `· ${r.emoji} ${r.count}`
+        : `${r.emoji} ${r.count}`,
       payload: `react_${postId}_${r.emoji}`,
     })));
   }
@@ -203,6 +216,31 @@ export function buildPostKeyboard(
   if (buttons.length === 0) return null;
 
   return { type: 'inline_keyboard', payload: { buttons } };
+}
+
+// Построить ряды кнопок вариантов опроса.
+// Каждый вариант — отдельный ряд (для читаемости длинных текстов).
+// votedIdx — индекс варианта текущего пользователя (для подсветки ✅).
+// Текст варианта обрезается до 32 символов чтобы не переполнить кнопку.
+export function buildPollButtons(
+  postId: number,
+  options: string[],
+  counts: number[],
+  votedIdx?: number
+): unknown[][] {
+  return options.map((text, idx) => {
+    const truncated = text.length > 32 ? text.slice(0, 31) + '…' : text;
+    const count = counts[idx] ?? 0;
+    const isVoted = votedIdx === idx;
+    const label = isVoted
+      ? `✅ ${truncated} (${count})`
+      : `${truncated} (${count})`;
+    return [{
+      type: 'callback',
+      text: label,
+      payload: `poll_${postId}_${idx}`,
+    }];
+  });
 }
 
 // Алиас для обратной совместимости
