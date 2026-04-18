@@ -31,6 +31,9 @@ export interface Channel {
   banned_words: string[];            // список стоп-слов (PRO)
   post_reactions: string[];          // эмодзи реакций под постами (до 5)
   notifications_enabled: boolean;    // уведомлять владельца о новых комментариях
+  poll_enabled: boolean;             // включить опрос для новых постов
+  poll_question: string | null;      // вопрос шаблона опроса
+  poll_options: Array<{ text: string }> | null; // варианты шаблона опроса
 }
 
 // Краткая сводка канала для списка на Dashboard
@@ -85,6 +88,8 @@ export interface Post {
   comments_enabled: boolean;        // зафиксировано на момент создания поста
   post_reactions: string[];         // зафиксировано на момент создания поста
   last_notified_at: string | null;  // время последней отправки уведомления владельцу
+  poll_question: string | null;     // снапшот вопроса опроса на момент создания поста
+  poll_options: Array<{ text: string }> | null; // снапшот вариантов опроса
 }
 
 // ─── КОММЕНТАРИЙ ─────────────────────────────────────────────────

@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { updateChannelSettings } from '../api/backend';
 import { useAppStore } from '../store/useAppStore';
+import { PollSettingsEditor, type PollTemplate } from '../components/PollSettingsEditor';
 
 // Эмодзи для реакций под постами
 const PRESET_EMOJIS = ['❤️', '👍', '🔥', '😂', '😮', '😢', '👏', '🎉', '💯', '🤔', '😍', '💪', '🙏', '👎', '🤯'];
@@ -71,6 +72,16 @@ export function SettingsPage({ channelId }: Props) {
   const [bannedInput, setBannedInput]                 = useState(channel?.banned_words?.join(', ') ?? '');
 
   // ── Статусы по секциям ────────────────────────────────────────
+  // ── Опрос ─────────────────────────────────────────────────────
+  const [pollTemplate, setPollTemplate] = useState<PollTemplate>({
+    poll_enabled: (channel as any)?.poll_enabled ?? false,
+    poll_question: (channel as any)?.poll_question ?? '',
+    poll_options: (channel as any)?.poll_options ?? [{ text: '' }, { text: '' }],
+  });
+  const [stPoll, setStPoll] = useState<SectionState>('idle');
+  const timerPoll = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Статусы по секциям ────────────────────────────────────────
   const [stComments, setStComments]             = useState<SectionState>('idle');
   const [stNotifications, setStNotifications]   = useState<SectionState>('idle');
   const [stReactions, setStReactions]           = useState<SectionState>('idle');
@@ -85,7 +96,7 @@ export function SettingsPage({ channelId }: Props) {
   // Очистка всех таймеров при размонтировании
   useEffect(() => {
     return () => {
-      [timerComments, timerNotifications, timerReactions, timerBanned].forEach((t) => {
+      [timerComments, timerNotifications, timerReactions, timerBanned, timerPoll].forEach((t) => {
         if (t.current) clearTimeout(t.current);
       });
     };
@@ -209,6 +220,38 @@ export function SettingsPage({ channelId }: Props) {
     );
   }, []);
 
+  // ── Сохранение настроек опроса ────────────────────────────────
+  const handleSavePoll = async () => {
+    if (pollTemplate.poll_enabled) {
+      if (!pollTemplate.poll_question.trim()) {
+        setStPoll('error');
+        autoReset(setStPoll, timerPoll);
+        return;
+      }
+      const validOptions = pollTemplate.poll_options.filter(o => o.text.trim().length > 0);
+      if (validOptions.length < 2) {
+        setStPoll('error');
+        autoReset(setStPoll, timerPoll);
+        return;
+      }
+    }
+
+    setStPoll('saving');
+    try {
+      const cleanOptions = pollTemplate.poll_options.map(o => ({ text: o.text.trim() }));
+      await updateChannelSettings(channelId, {
+        poll_enabled: pollTemplate.poll_enabled,
+        poll_question: pollTemplate.poll_question.trim() || null,
+        poll_options: pollTemplate.poll_enabled ? cleanOptions : null,
+      } as any);
+      setStPoll('saved');
+      autoReset(setStPoll, timerPoll);
+    } catch {
+      setStPoll('error');
+      autoReset(setStPoll, timerPoll);
+    }
+  };
+
   if (!channel) return null;
 
   return (
@@ -310,17 +353,22 @@ export function SettingsPage({ channelId }: Props) {
                 Выберите до 5 эмодзи — они появятся как кнопки под новыми постами.
               </p>
               <div className="preset-words__chips">
-                {PRESET_EMOJIS.map((emoji) => (
-                  <button
-                    key={emoji}
-                    type="button"
-                    className={`preset-chip emoji-chip${selectedReactions.includes(emoji) ? ' preset-chip--active' : ''}`}
-                    onClick={() => toggleEmoji(emoji)}
-                    disabled={!selectedReactions.includes(emoji) && selectedReactions.length >= 5}
-                  >
-                    {emoji}
-                  </button>
-                ))}
+                {PRESET_EMOJIS.map((emoji) => {
+                  const isSelected = selectedReactions.includes(emoji);
+                  return (
+                    <button
+                      key={emoji}
+                      type="button"
+                      className={`preset-chip emoji-chip${isSelected ? ' preset-chip--active' : ''}`}
+                      onClick={() => toggleEmoji(emoji)}
+                      disabled={!isSelected && selectedReactions.length >= 5}
+                      aria-pressed={isSelected}
+                      aria-label={`${emoji}${isSelected ? ' (выбрано)' : ''}`}
+                    >
+                      {emoji}
+                    </button>
+                  );
+                })}
               </div>
               <div className="settings-section__hint">
                 Выбрано: {selectedReactions.length} / 5
@@ -352,6 +400,7 @@ export function SettingsPage({ channelId }: Props) {
           </p>
           <textarea
             className="settings-textarea"
+            aria-label="Список стоп-слов через запятую"
             placeholder="спам, реклама, ненормативная лексика..."
             value={bannedInput}
             onChange={(e) => setBannedInput(e.target.value)}
@@ -383,16 +432,20 @@ export function SettingsPage({ channelId }: Props) {
                     </button>
                   </div>
                   <div className="preset-words__chips">
-                    {cat.words.map((word) => (
-                      <button
-                        key={word}
-                        type="button"
-                        className={`preset-chip${currentWords.has(word) ? ' preset-chip--active' : ''}`}
-                        onClick={() => toggleWord(word)}
-                      >
-                        {word}
-                      </button>
-                    ))}
+                    {cat.words.map((word) => {
+                      const isActive = currentWords.has(word);
+                      return (
+                        <button
+                          key={word}
+                          type="button"
+                          className={`preset-chip${isActive ? ' preset-chip--active' : ''}`}
+                          onClick={() => toggleWord(word)}
+                          aria-pressed={isActive}
+                        >
+                          {word}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -404,6 +457,25 @@ export function SettingsPage({ channelId }: Props) {
             disabled={stBanned === 'saving' || wordCount > 100}
           >
             {stBanned === 'saving' ? 'Сохраняю…' : 'Сохранить стоп-слова'}
+          </button>
+        </div>
+
+        {/* ── Опрос под постами ─────────────────────────────────── */}
+        <div className="settings-section">
+          <div className="settings-section__title-row">
+            <div className="settings-section__title">Опрос</div>
+            <SectionBadge state={stPoll} errorText="Заполните вопрос и 2+ варианта" />
+          </div>
+          <p className="settings-section__hint">
+            Каждый новый пост канала автоматически получит кнопки с вариантами ответа.
+          </p>
+          <PollSettingsEditor value={pollTemplate} onChange={setPollTemplate} />
+          <button
+            className="btn btn--save-section"
+            onClick={handleSavePoll}
+            disabled={stPoll === 'saving'}
+          >
+            {stPoll === 'saving' ? 'Сохраняю…' : 'Сохранить опрос'}
           </button>
         </div>
 

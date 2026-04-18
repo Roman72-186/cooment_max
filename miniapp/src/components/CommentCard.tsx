@@ -440,8 +440,9 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
 
             {/* Цитата — клик скроллит к оригинальному комментарию */}
             {parentComment && (
-              <div
+              <button
                 className="comment-quote"
+                aria-label={`Перейти к комментарию ${parentComment.author_name}`}
                 onClick={() => {
                   const el = document.getElementById(`comment-${parentComment.id}`);
                   if (!el) return;
@@ -455,7 +456,7 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
                   {parentComment.text.slice(0, 100)}
                   {parentComment.text.length > 100 ? '…' : ''}
                 </span>
-              </div>
+              </button>
             )}
 
             <p className="comment-text">{renderTextWithLinks(comment.text)}</p>
@@ -469,8 +470,10 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
                     className={`reaction-pill ${r.reacted_by_me ? 'reaction-pill--active' : ''}`}
                     onClick={() => handleReact(r.emoji)}
                     disabled={reacting}
+                    aria-label={`${r.emoji} ${r.count}. ${r.reacted_by_me ? 'Убрать реакцию' : 'Добавить реакцию'}`}
+                    aria-pressed={r.reacted_by_me}
                   >
-                    {r.emoji} <span className="reaction-count">{r.count}</span>
+                    {r.emoji} <span className="reaction-count" aria-hidden="true">{r.count}</span>
                   </button>
                 ))}
               </div>
@@ -496,6 +499,8 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
                     className={`context-emoji-btn ${isActive ? 'context-emoji-btn--active' : ''}`}
                     onClick={() => handleReact(emoji)}
                     disabled={reacting}
+                    aria-label={`${isActive ? 'Убрать' : 'Добавить'} реакцию ${emoji}`}
+                    aria-pressed={isActive}
                   >
                     {emoji}
                   </button>

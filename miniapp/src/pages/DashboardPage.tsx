@@ -46,7 +46,8 @@ export function DashboardPage() {
       <main className="page-content">
         {user.channels.length === 0 ? (
           <div className="empty-state">
-            <span>Нет подключённых каналов</span>
+            <span className="empty-state__icon">📡</span>
+            <span className="empty-state__text">Нет подключённых каналов</span>
             <button
               className="btn btn--primary"
               onClick={() => setPage({ id: 'onboarding' })}
@@ -155,14 +156,14 @@ function ChannelCard({ channel, onAnalytics, onSettings, onInbox }: ChannelCardP
       </div>
 
       <div className="channel-card__actions">
-        <button className="btn btn--ghost btn--sm" onClick={onInbox} title="Входящие комментарии">
-          📥
+        <button className="btn btn--ghost btn--sm" onClick={onInbox}>
+          📥 Входящие
         </button>
-        <button className="btn btn--secondary btn--sm" onClick={onAnalytics}>
-          Аналитика
+        <button className="btn btn--ghost btn--sm" onClick={onAnalytics}>
+          📊 Аналитика
         </button>
         <button className="btn btn--ghost btn--sm" onClick={onSettings}>
-          Настройки
+          ⚙️ Настройки
         </button>
       </div>
     </div>

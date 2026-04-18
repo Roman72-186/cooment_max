@@ -110,14 +110,32 @@ docker exec -it mc_redis redis-cli -a <REDIS_PASSWORD>
 
 ### Deploy
 
-Сервер НЕ имеет git-репозитория. Деплой только через SFTP (paramiko):
-1. Загрузить изменённые файлы через `sftp.open(remote_path, 'w').write(content)`
-2. Пересобрать нужный контейнер: `docker compose up -d --build mc_bot` (или mc_backend, mc_nginx)
+Сервер НЕ имеет git-репозитория. Деплой через Python SFTP-скрипты в корне репо (`deploy_*.py`).
 
-Mini App (изменения в `miniapp/`) — пересобирать `mc_nginx`:
-```bash
-docker compose up -d --build mc_nginx   # занимает ~3 мин (npm ci + build внутри Docker)
+**Паттерн деплоя:**
+```python
+# Каждый скрипт: upload files → apply migration → rebuild containers
+python deploy_polls.py   # например
 ```
+
+VPS root: `/opt/max-comments/`. Контейнеры: `mc_bot`, `mc_backend`, `mc_nginx`.
+
+**Что пересобирать:**
+- `bot/` изменения → `mc_bot`
+- `backend/` изменения → `mc_backend`  
+- `miniapp/` изменения → `mc_nginx` (~3 мин, npm ci + Vite build внутри Docker)
+- Изменения в обоих → `mc_bot mc_backend` одной командой
+
+**Применение SQL-миграций на VPS:**
+```bash
+# Одна миграция
+docker exec -i mc_postgres psql -U mcuser -d maxcomments < infra/migrations/004_polls.sql
+
+# Все миграции по порядку (idempotent)
+bash infra/migrations/apply.sh
+```
+
+Миграции в `infra/migrations/` нумеруются (`001_`, `002_`, ...) и используют `IF NOT EXISTS` — безопасно запускать повторно.
 
 ---
 
@@ -151,8 +169,8 @@ docker compose up -d --build mc_nginx   # занимает ~3 мин (npm ci + b
 | `onBotAdded.ts` | bot added to channel | регистрирует канал, определяет owner через getChatAdmins, отправляет welcome-сообщение |
 | `onBotRemoved.ts` | bot removed | деактивирует канал (is_active = false) |
 | `onBotStarted.ts` | user starts bot | upsert user, обрабатывает referral codes; `start=notify` → DM-подтверждение подписки |
-| `onPostCreated.ts` | channel post published | сохраняет пост, прикрепляет кнопку Comments + emoji-реакции |
-| `onCallback.ts` | button tap | toggle emoji-реакции на посте через `togglePostReaction()`, перестраивает клавиатуру с новыми счётчиками; `answerCallback` — fire-and-forget (кнопка отпускается немедленно), `editMessage` — дебаунс 500 мс (серия быстрых кликов → один API-вызов) |
+| `onPostCreated.ts` | channel post published | сохраняет пост, прикрепляет кнопку Comments + emoji-реакции + кнопки опроса (если настроены) |
+| `onCallback.ts` | button tap | два типа payload: `react_<postId>_<emoji>` → toggle реакции через `togglePostReaction()`; `poll_<postId>_<optionIdx>` → toggle голоса через `togglePollVote()`; `answerCallback` — fire-and-forget (кнопка отпускается немедленно), `editMessage` — дебаунс **300 мс** (серия кликов → один API-вызов) |
 
 ### Background jobs (`bot/src/jobs/`)
 
@@ -194,6 +212,8 @@ POST /api/payments/webhook            — T-Bank webhook (верификация
 GET  /api/payments/status             — статус PRO, дата истечения
 
 GET  /api/referrals/stats             — кол-во рефералов + реферальная ссылка
+
+GET  /api/polls/:postId/results       — результаты опроса поста (optionalAuth → voted_option)
 
 GET  /c/:commentId                    — короткая ссылка на комментарий → 302 в MAX deep-link
                                         (регистрируется в backend/src/index.ts, не в роутерах)
@@ -239,7 +259,7 @@ GET  /health
 | `DashboardPage` | Список каналов владельца + статистика |
 | `AnalyticsPage` | Графики просмотров/комментариев/реакций |
 | `InboxPage` | Агрегатор последних комментариев по всем (или одному) каналу владельца |
-| `SettingsPage` | Настройки канала (banned_words с категориями, emoji, флаги) |
+| `SettingsPage` | Настройки канала (banned_words с категориями, emoji, флаги, шаблон опроса через `PollSettingsEditor`) |
 | `PricingPage` | PRO-тариф + промо-код + кнопка оплаты T-Bank |
 | `AdminPage` | Суперадмин: вкладки Users, Channels, Payments, Promo Codes, Settings |
 | `OnboardingPage` | Первичная настройка при добавлении бота |
@@ -258,6 +278,17 @@ GET  /health
 | *(есть каналы)* | DashboardPage |
 | *(is_admin = true)* | AdminPage |
 | *(ошибка загрузки)* | ErrorPage — inline с кнопкой "Попробовать снова" (НЕ онбординг) |
+
+### Ключевые абстракции Mini App
+
+- **`miniapp/src/bridge/maxBridge.ts`** — единственная точка доступа к `window.WebApp`. Все вызовы Bridge (получить пользователя, `initData`, `start_param`, `showAlert`) идут через этот файл. `alert()`/`confirm()`/`prompt()` заменены на `WebApp.showAlert()`/`WebApp.showConfirm()`.
+- **`miniapp/src/api/backend.ts`** — axios-клиент с interceptor: автоматически добавляет `X-Init-Data` из Bridge в каждый запрос. Все запросы к REST API идут только через него.
+- **`miniapp/src/store/useAppStore.ts`** — Zustand стор. `setPage()` автоматически сбрасывает `comments/loading/error/replyTo` при навигации.
+- **`miniapp/src/components/PollSettingsEditor.tsx`** — редактор шаблона опроса (вопрос + варианты), встроен в SettingsPage; изменения применяются к новым постам, не к уже опубликованным.
+
+### Code style
+
+Prettier (`.prettierrc`): `singleQuote: true`, `semi: true`, `tabWidth: 2`, `trailingComma: "es5"`, `printWidth: 100`.
 
 ### Система реакций — два независимых механизма
 
@@ -306,15 +337,24 @@ GET  /health
 - `GET /api/payments/config` публичный (no auth) — Mini App читает актуальную цену до инициализации юзера
 - Административное изменение через `PATCH /api/admin/settings` (requireAdminUser)
 
+### Клавиатура поста — `buildPostKeyboard`
+
+`bot/src/api/maxClient.ts::buildPostKeyboard(postId, commentCount, reactions, commentsEnabled, selectedEmoji, pollRows)` — собирает inline_keyboard с порядком рядов:
+1. `[💬 Комментарии (N)]` — open_app кнопка (если `commentsEnabled`)
+2. Ряды вариантов опроса (если `pollRows.length > 0`) — каждый вариант на отдельном ряду, payload: `poll_<postId>_<idx>`
+3. `[😀 3] [❤️ 5]` — реакции в одном ряду, payload: `react_<postId>_<emoji>`
+
+Возвращает `null` если все три пустые — тогда `editMessage` отправляется без keyboard attachment.
+
 ### TypeScript shared types
 
-`shared/types.ts` — единственный источник типов для всех сервисов: `User`, `Channel`, `ChannelSummary`, `Post`, `Comment`, `Payment`, `AnalyticsDaily`, `WebhookUpdate`, `MaxUser`, `MaxMessage`.
+`shared/types.ts` — единственный источник типов для всех сервисов: `User`, `Channel`, `ChannelSummary`, `Post`, `Comment`, `Payment`, `AnalyticsDaily`, `WebhookUpdate`, `MaxUser`, `MaxMessage`, `PollOption`, `PollResults`, `PollResponse`.
 
 ---
 
 ## Data Model (PostgreSQL)
 
-Ядро: `users`, `channels`, `posts`, `comments`, `comment_reactions`, `reply_notifications`, `payments`, `analytics_daily`, `channel_bans`, `post_subscriptions`, `promo_codes`, `app_settings`
+Ядро: `users`, `channels`, `posts`, `comments`, `comment_reactions`, `reply_notifications`, `payments`, `analytics_daily`, `channel_bans`, `post_subscriptions`, `promo_codes`, `app_settings`, `post_polls`, `poll_votes`
 
 - `channels.discussion_chat_id` — зарезервировано (MAX API не поддерживает создание group chat ботом)
 - `posts.discussion_msg_id` — зарезервировано
@@ -332,6 +372,10 @@ GET  /health
 - `channels.banned_words TEXT[]` — массив стоп-слов для модерации
 - `promo_codes` — промо-коды со скидкой; `used_count` инкрементируется только при CONFIRMED
 - `app_settings` — key-value: `pro_price_rub`, `pro_days`; фоллбек к константам если пусто
+- `post_polls (id, post_id UNIQUE, question, options_json JSONB)` — один опрос на пост; `options_json = [{text: "..."}]`
+- `poll_votes (poll_id, user_max_id, option_idx)` — PK `(poll_id, user_max_id)` → один голос на пользователя; toggle через `db.togglePollVote()`
+- `channels.poll_enabled BOOLEAN`, `channels.poll_question TEXT`, `channels.poll_options JSONB` — шаблон опроса на уровне канала (миграция 005); применяется к **новым** постам, изменение не затрагивает уже опубликованные
+- `posts.poll_question TEXT`, `posts.poll_options JSONB` — **снапшот** настроек опроса на момент публикации (аналогично `posts.post_reactions`)
 
 ### Важно: неполная схема `infra/init.sql`
 
@@ -380,7 +424,12 @@ CREATE INDEX IF NOT EXISTS idx_reply_notifications_unsent
 ALTER TABLE users ADD COLUMN IF NOT EXISTS reply_notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ```
 
-Последующие миграции применялись вручную через `docker exec mc_postgres psql`.
+Последующие миграции в `infra/migrations/` (применять через `apply.sh` или вручную):
+- `001_create_app_settings.sql`
+- `002_promo_codes_and_payments.sql`
+- `003_post_reactions_snapshot.sql`
+- `004_polls.sql` — таблицы `post_polls`, `poll_votes`
+- `005_channel_poll_settings.sql` — шаблон опроса на уровне канала (`channels.poll_enabled/question/options`) + снапшот на уровне поста (`posts.poll_question/options`)
 
 Индексы: `comments.post_id`, `posts.channel_id`, `analytics_daily.(channel_id, date)`, `channels.owner_id`
 
@@ -415,6 +464,59 @@ Nginx использует нестандартные порты — уточн�
 - Реферальная программа: +30 дней PRO за приведённого владельца канала (бонус начисляется в webhook)
 - PRO-гейты: `backend/src/middleware/planGate.ts`
 - Auto-renew при истечении: `backend/src/jobs/autoRenew.ts` (содержит устаревший ЮКасса-код — не активировать без рефакторинга)
+
+---
+
+## Рабочий процесс разработки
+
+### Bulletproof workflow
+
+Для нетривиальных задач (новые фичи, рефакторинг, архитектурные изменения) используется скилл `/bulletproof` — 12-этапный процесс:
+
+```
+/bulletproof   # запустить скилл
+```
+
+Артефакты сохраняются в:
+- `thoughts/research/YYYY-MM-DD-<task>.md` — результаты исследования (Stage 1)
+- `specs/YYYY-MM-DD-<task>.md` — спека: что и зачем (Stage 2)
+- `plans/YYYY-MM-DD-<task>.md` — план реализации с фазами (Stage 3)
+- `plans/archive/` — выполненные планы
+- `progress/<task>-handoff.md` — handoff между сессиями
+
+Размер задачи определяет режим: **S** (баг-фикс, 1-2 файла) → этапы 1→4→5→6→7; **M** (фича, 3-10 файлов) → этапы 1-10; **L** (архитектура, 10+ файлов) → все 12 этапов.
+
+> `spec/` (без s) — легаси-папка со scratch-файлами, не использовать для новых задач. Новые спеки → `specs/`.
+
+### Кастомные скиллы (`.claude/skills/`)
+
+| Скилл | Когда применять |
+|-------|----------------|
+| `/bulletproof` | Любая нетривиальная задача — основной workflow |
+| `/harden` | Перед деплоем UI: empty states, обработка ошибок, edge cases |
+| `/polish` | Финальный прогон UI перед шипом |
+| `/audit` | Технический аудит: a11y, performance, responsive |
+| `/optimize` | Если Mini App тормозит на мобильных |
+| `/shape` | Планирование UX нового экрана до написания кода |
+| `/critique` | Оценить существующий UI с UX-скорингом |
+| `/clarify` | Улучшить тексты ошибок, лейблы, onboarding-копи |
+
+Остальные визуальные скиллы (`/animate`, `/bolder`, `/colorize`, `/delight`, `/distill`, `/layout`, `/typeset`, `/quieter`, `/adapt`, `/overdrive`) — по контексту при работе с Mini App UI.
+
+### Кастомные агенты
+
+В `.claude/agents/` живут специализированные агенты для подзадач:
+- `architect.md` — проектирование архитектуры до написания кода
+- `implementer.md` — реализация по готовому плану из `specs/`
+- `reviewer.md` — код-ревью после реализации (только читает, не меняет)
+- `tester.md` — написание тестов (Vitest) после реализации
+- `save_ses.md` — сохранение контекста сессии
+
+### Ветки и коммиты
+
+- Каждая задача → ветка `feature/<task-name>`
+- После всех гейтов → squash merge в `main`
+- Гейты перед merge: `npx tsc --noEmit` (bot + backend + miniapp) + `npm test` в bot/
 
 ---
 

@@ -104,10 +104,12 @@ export async function createPost(data: {
   attachments_json?: unknown[];
   comments_enabled?: boolean;
   post_reactions?: string[];
+  poll_question?: string | null;
+  poll_options?: Array<{ text: string }> | null;
 }): Promise<Post | undefined> {
   const result = await pool.query<Post>(
-    `INSERT INTO posts (channel_id, max_message_id, text_preview, attachments_json, comments_enabled, post_reactions)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO posts (channel_id, max_message_id, text_preview, attachments_json, comments_enabled, post_reactions, poll_question, poll_options)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (channel_id, max_message_id) DO NOTHING
      RETURNING *`,
     [
@@ -117,6 +119,8 @@ export async function createPost(data: {
       JSON.stringify(data.attachments_json ?? []),
       data.comments_enabled ?? true,
       data.post_reactions ?? [],
+      data.poll_question ?? null,
+      data.poll_options ? JSON.stringify(data.poll_options) : null,
     ]
   );
   return result.rows[0];

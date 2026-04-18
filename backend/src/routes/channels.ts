@@ -233,11 +233,22 @@ channelsRouter.patch('/:id/settings', requireAuth, async (req, res) => {
     return;
   }
 
-  const { comments_enabled, banned_words, post_reactions, notifications_enabled } = req.body as {
+  const {
+    comments_enabled,
+    banned_words,
+    post_reactions,
+    notifications_enabled,
+    poll_enabled,
+    poll_question,
+    poll_options,
+  } = req.body as {
     comments_enabled?: boolean;
     banned_words?: string[];
     post_reactions?: string[];
     notifications_enabled?: boolean;
+    poll_enabled?: boolean;
+    poll_question?: string | null;
+    poll_options?: Array<{ text: string }> | null;
   };
 
   // Должно быть хотя бы одно поле
@@ -245,7 +256,10 @@ channelsRouter.patch('/:id/settings', requireAuth, async (req, res) => {
     comments_enabled === undefined &&
     banned_words === undefined &&
     post_reactions === undefined &&
-    notifications_enabled === undefined
+    notifications_enabled === undefined &&
+    poll_enabled === undefined &&
+    poll_question === undefined &&
+    poll_options === undefined
   ) {
     res.status(400).json({ error: 'Нечего обновлять' });
     return;
@@ -264,6 +278,26 @@ channelsRouter.patch('/:id/settings', requireAuth, async (req, res) => {
     if (!Array.isArray(post_reactions) || post_reactions.length > 5) {
       res.status(400).json({ error: 'post_reactions: массив максимум 5 эмодзи' });
       return;
+    }
+  }
+
+  // Валидация настроек опроса
+  if (poll_question !== undefined && poll_question !== null) {
+    if (typeof poll_question !== 'string' || poll_question.length > 200) {
+      res.status(400).json({ error: 'poll_question: не более 200 символов' });
+      return;
+    }
+  }
+  if (poll_options !== undefined && poll_options !== null) {
+    if (!Array.isArray(poll_options) || poll_options.length < 2 || poll_options.length > 5) {
+      res.status(400).json({ error: 'poll_options: от 2 до 5 вариантов' });
+      return;
+    }
+    for (const opt of poll_options) {
+      if (!opt.text || typeof opt.text !== 'string' || opt.text.length > 50) {
+        res.status(400).json({ error: 'poll_options: каждый вариант не более 50 символов' });
+        return;
+      }
     }
   }
 
@@ -298,12 +332,25 @@ channelsRouter.patch('/:id/settings', requireAuth, async (req, res) => {
       params.push(notifications_enabled);
       sets.push(`notifications_enabled = $${params.length}`);
     }
+    if (poll_enabled !== undefined) {
+      params.push(poll_enabled);
+      sets.push(`poll_enabled = $${params.length}`);
+    }
+    if (poll_question !== undefined) {
+      params.push(poll_question);
+      sets.push(`poll_question = $${params.length}`);
+    }
+    if (poll_options !== undefined) {
+      params.push(poll_options ? JSON.stringify(poll_options) : null);
+      sets.push(`poll_options = $${params.length}`);
+    }
 
     const { rows } = await pool.query(
       `UPDATE channels
           SET ${sets.join(', ')}
         WHERE id = $1
-        RETURNING id, comments_enabled, banned_words, post_reactions, notifications_enabled`,
+        RETURNING id, comments_enabled, banned_words, post_reactions, notifications_enabled,
+                  poll_enabled, poll_question, poll_options`,
       params
     );
 

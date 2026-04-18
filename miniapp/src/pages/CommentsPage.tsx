@@ -153,8 +153,8 @@ export function CommentsPage({ postId, highlightCommentId }: Props) {
     recordView(postId); // фиксируем просмотр один раз при открытии
     loadComments();
 
-    // Обновляем каждые 5 секунд (для быстрой синхронизации реакций)
-    const timer = setInterval(loadComments, 5000);
+    // Обновляем каждые 15 секунд — оптимизация нагрузки на сервер
+    const timer = setInterval(loadComments, 15_000);
     return () => clearInterval(timer);
   }, [loadComments]);
 

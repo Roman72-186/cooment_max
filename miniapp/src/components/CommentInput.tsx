@@ -123,10 +123,10 @@ export function CommentInput({ postId, onSent }: Props) {
   return (
     <div className="comment-input-wrap">
       {sendError && (
-        <div className="comment-input-error">{sendError}</div>
+        <div className="comment-input-error" role="alert" aria-live="assertive">{sendError}</div>
       )}
       {isBlocked && !sendError && (
-        <div className="comment-input-cooldown">
+        <div className="comment-input-cooldown" role="status" aria-live="polite">
           Не флудите — подождите {cooldown} сек.
         </div>
       )}
@@ -138,13 +138,18 @@ export function CommentInput({ postId, onSent }: Props) {
               {replyTo.text.slice(0, 80)}{replyTo.text.length > 80 ? '…' : ''}
             </span>
           </div>
-          <button className="reply-banner__close" onClick={() => setReplyTo(null)}>✕</button>
+          <button
+            className="reply-banner__close"
+            onClick={() => setReplyTo(null)}
+            aria-label="Отменить ответ"
+          >✕</button>
         </div>
       )}
       <div className="comment-input-row">
         <textarea
           ref={textareaRef}
           className={`comment-input ${isBlocked ? 'comment-input--blocked' : ''}`}
+          aria-label={replyTo ? `Ответить ${replyTo.author_name}` : 'Текст комментария'}
           placeholder={
             isBlocked
               ? `Подождите ${cooldown} сек…`
@@ -164,7 +169,7 @@ export function CommentInput({ postId, onSent }: Props) {
           className={`send-btn ${btnDisabled ? 'send-btn--disabled' : ''} ${isBlocked ? 'send-btn--cooldown' : ''}`}
           onClick={handleSend}
           disabled={btnDisabled}
-          title={isBlocked ? `Подождите ${cooldown} сек.` : undefined}
+          aria-label={sending ? 'Отправка...' : isBlocked ? `Подождите ${cooldown} сек.` : 'Отправить комментарий'}
         >
           {sending ? '…' : isBlocked ? `${cooldown}` : '➤'}
         </button>

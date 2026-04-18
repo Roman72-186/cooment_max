@@ -46,9 +46,9 @@ export function updateSinglePostCounter(postId: number): void {
         db.getBatchPostReactions([postId]),
       ]);
 
-      const count = commentCounts.get(postId) ?? 0;
+      const count = commentCounts.get(String(postId)) ?? 0;
       const emojis: string[] = post.post_reactions ?? [];
-      const allReactions = emojis.length > 0 ? (reactionsByPost.get(postId) ?? []) : [];
+      const allReactions = emojis.length > 0 ? (reactionsByPost.get(String(postId)) ?? []) : [];
       const orderedReactions = allReactions.length > 0
         ? emojis.map(e => allReactions.find(r => r.emoji === e) ?? { emoji: e, count: 0 })
         : [];
@@ -65,8 +65,13 @@ async function applyPostUpdate(
   count: number,
   orderedReactions: { emoji: string; count: number }[],
 ): Promise<void> {
-  const keyboard = maxClient.buildPostKeyboard(post.id, count, orderedReactions, post.comments_enabled);
-  const mediaAttachments = (post.attachments_json ?? []) as Record<string, unknown>[];
+  let pollRows: unknown[][] = [];
+  const pollState = await db.getPollWithCounts(post.id);
+  if (pollState) {
+    pollRows = maxClient.buildPollButtons(post.id, pollState.options, pollState.counts);
+  }
+  const keyboard = maxClient.buildPostKeyboard(post.id, count, orderedReactions, post.comments_enabled, undefined, pollRows);
+  const mediaAttachments = (post.attachments_json ?? []) as unknown as Record<string, unknown>[];
   const keyboardAttachments = keyboard ? [keyboard] : [];
   await maxClient.editMessage(post.max_message_id!, {
     text: post.text_preview || undefined,
@@ -92,14 +97,16 @@ async function updateAllCounters(): Promise<void> {
 
   for (const post of posts) {
     try {
-      const count = commentCounts.get(post.id) ?? 0;
+      // String() — Map-ключи строковые (BIGINT из PG не теряет точность)
+      const postIdStr = String(post.id);
+      const count = commentCounts.get(postIdStr) ?? 0;
 
       // Строим упорядоченный список реакций по снапшоту emoji поста.
       // Реакции показываем только если пост был инициализирован с ними
       // (т.е. в post_reaction_counts есть записи для этого поста).
       const emojis: string[] = post.post_reactions ?? [];
       // Данные уже в памяти — без дополнительных запросов к БД
-      const allReactions = emojis.length > 0 ? (reactionsByPost.get(post.id) ?? []) : [];
+      const allReactions = emojis.length > 0 ? (reactionsByPost.get(postIdStr) ?? []) : [];
       // Если нет записей — пост создан до включения реакций; не добавляем кнопки
       const orderedReactions = allReactions.length > 0
         ? emojis.map(e => allReactions.find(r => r.emoji === e) ?? { emoji: e, count: 0 })

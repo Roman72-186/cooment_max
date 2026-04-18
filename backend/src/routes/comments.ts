@@ -2,8 +2,17 @@
 // POST /api/comments             — добавить комментарий
 // DELETE /api/comments/:id       — скрыть (автор ИЛИ владелец канала)
 import { Router } from 'express';
-import { pool } from '../db/db.js';
+import { pool, upsertUser } from '../db/db.js';
 import { requireAuth, optionalAuth } from '../middleware/auth.js';
+
+// URL внутреннего сервиса бота (доступен только внутри Docker-сети)
+const BOT_INTERNAL_URL = process.env.BOT_INTERNAL_URL ?? 'http://mc_bot:3000';
+
+// Попросить бота немедленно обновить кнопку поста — fire-and-forget
+function triggerCounterUpdate(postId: number): void {
+  fetch(`${BOT_INTERNAL_URL}/internal/update-post/${postId}`, { method: 'POST' })
+    .catch(() => {});
+}
 
 export const commentsRouter = Router();
 
@@ -168,17 +177,13 @@ commentsRouter.post('/', requireAuth, async (req, res) => {
   }
 
   try {
-    // Upsert пользователя
-    const userResult = await pool.query(
-      `INSERT INTO users (max_user_id, name, username)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (max_user_id) DO UPDATE
-         SET name = EXCLUDED.name,
-             username = COALESCE(EXCLUDED.username, users.username)
-       RETURNING id`,
-      [maxUser.user_id, maxUser.name, maxUser.username ?? null]
-    );
-    const authorId = userResult.rows[0].id;
+    // Upsert пользователя через общий helper из db.ts
+    const authorRow = await upsertUser({
+      max_user_id: maxUser.user_id,
+      name: maxUser.name,
+      username: maxUser.username ?? null,
+    });
+    const authorId = authorRow.id;
 
     // ── Rate limit: не более 5 комментариев за 15 секунд ─────────
     const RATE_LIMIT_COUNT    = 5;
@@ -248,6 +253,8 @@ commentsRouter.post('/', requireAuth, async (req, res) => {
         'UPDATE posts SET comment_count = comment_count + 1, last_activity_at = NOW() WHERE id = $1',
         [post_id]
       );
+      // Мгновенно обновляем кнопку в MAX — дебаунс 500ms в боте схлопнет серии
+      triggerCounterUpdate(post_id);
     }
 
     const row = rows[0];
@@ -359,6 +366,11 @@ commentsRouter.delete('/:id', requireAuth, async (req, res) => {
       }
 
       await deleteClient.query('COMMIT');
+
+      // Мгновенно обновляем кнопку в MAX если счётчик изменился
+      if (updated.length > 0) {
+        triggerCounterUpdate(rows[0].post_id);
+      }
     } catch (txErr) {
       try { await deleteClient.query('ROLLBACK'); } catch { /* игнорируем */ }
       throw txErr;

@@ -54,7 +54,18 @@
       "Bash(2>&1)",
       "Bash(wrangler deploy:*)",
       "Bash(ssh-keygen -l -f ~/.ssh/id_ed25519.pub)",
-      "Bash(awk '{print $2}')"
+      "Bash(awk '{print $2}')",
+      "Bash(git commit:*)",
+      "Bash(gh repo *)",
+      "Bash(gh api *)",
+      "Bash(mkdir -p C:/tmp)",
+      "Bash(pip install *)",
+      "Bash(notebooklm *)",
+      "Bash(npx vitest *)",
+      "Bash(cat)",
+      "Read(//tmp/**)",
+      "Bash(bash .claude/skills/git-pushing/scripts/smart_commit.sh \"fix: updateCounters передаёт pollRows в buildPostKeyboard — кнопки опроса больше не пропадают каждые 60 сек\")",
+      "Bash(bash /c/Users/User/.claude/skills/git-pushing/scripts/smart_commit.sh \"fix: updateCounters передаёт pollRows в buildPostKeyboard — кнопки опроса больше не пропадают каждые 60 сек\")"
     ]
   }
 }

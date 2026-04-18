@@ -25,6 +25,10 @@
 | [[05-DevLog/2026-04-09-ux-counters-stopwords]] | UX: счётчики, стоп-слова, mobile-адаптив |
 | [[05-DevLog/2026-04-09-emoji-reactions-comments]] | Emoji-реакции на комментарии, плоские треды |
 | [[05-DevLog/2026-04-10-reply-notifications]] | Reply-уведомления, баннер notify, DB-очередь |
+| [[05-DevLog/2026-04-11-rkn-bypass-comment-max-ru]] | Обход РКН: домен comment-max.ru + CF Worker + SSL |
+| [[05-DevLog/2026-04-11-dynamic-pricing]] | Динамическая цена PRO, промо-коды, AdminPage |
+| [[05-DevLog/2026-04-12-deeplinks-presets-security]] | Deep links на комментарии, пресеты стоп-слов, security review |
+| [[05-DevLog/2026-04-12-audit-and-fixes]] | Архитектурный аудит (spec/), rate limiting, healthcheck, ErrorBoundary |
 | [[06-Decisions/ADR-001-tech-stack]] | ADR-001: Выбор технологического стека |
 | [[06-Decisions/ADR-002-no-vercel]] | ADR-002: Отказ от Vercel — Mini App на VPS |
 | [[06-Decisions/ADR-003-bugs-and-lessons]] | ADR-003: Найденные баги, диагностика, правила |
@@ -34,8 +38,8 @@
 - **Спецификация:** `MAX_Comments_Build_Instructions_v2.md` в корне репо
 - **Порядок сборки:** Section 11 спецификации (24 шага)
 - **Критический файл:** `bot/src/handlers/onPostCreated.ts`
-- **Mini App:** https://sushi-house-39.online
-- **API:** https://sushi-house-39.online/api/
+- **Mini App:** https://comment-max.ru
+- **API:** https://comment-max.ru/api/
 - **Последний стабильный коммит:** `d93d18a`
 
 ## Статус шагов (Section 11)

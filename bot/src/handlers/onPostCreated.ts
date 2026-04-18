@@ -10,30 +10,6 @@ import * as db from '../db/db.js';
 import { logger } from '../utils/logger.js';
 import type { WebhookUpdate, Channel } from '../../../shared/types.js';
 
-// Разобрать #poll из текста поста.
-// Формат:
-//   #poll Какой контент вам нравится?
-//   🅰️ Вариант первый
-//   🅱️ Вариант второй
-// Возвращает null если тег не найден или вариантов меньше 2 / больше 5.
-function parsePoll(text: string): { question: string; options: string[] } | null {
-  const pollMatch = text.match(/#poll[^\S\r\n]+([^\n\r]+)/i);
-  if (!pollMatch) return null;
-
-  const question = pollMatch[1].trim();
-  if (!question) return null;
-
-  // Всё после строки с #poll — кандидаты в варианты
-  const afterPoll = text.slice(text.indexOf(pollMatch[0]) + pollMatch[0].length);
-  const options = afterPoll
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(line => line.length > 0);
-
-  if (options.length < 2 || options.length > 5) return null;
-
-  return { question, options };
-}
 
 export async function onPostCreated(update: WebhookUpdate): Promise<void> {
   const message = update.message;
@@ -75,6 +51,13 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
     // 2. Сохранить пост в БД (полный текст + медиа-вложения для корректного обновления кнопки)
     const originalAttachments = (message.body.attachments ?? []) as unknown as Record<string, unknown>[];
     const mediaAttachments = originalAttachments.filter(a => a?.type !== 'inline_keyboard');
+
+    // Снапшот опроса из настроек канала на момент создания поста
+    const channelPollEnabled = (channel as any).poll_enabled ?? false;
+    const channelPollQuestion: string | null = (channel as any).poll_question ?? null;
+    const channelPollOptions: Array<{ text: string }> | null = (channel as any).poll_options ?? null;
+    const hasPollTemplate = channelPollEnabled && channelPollQuestion && channelPollOptions && channelPollOptions.length >= 2;
+
     const post = await db.createPost({
       channel_id: channel.id,
       max_message_id: messageId,
@@ -82,6 +65,8 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
       attachments_json: mediaAttachments, // медиа-вложения сохраняем отдельно
       comments_enabled: channel.comments_enabled, // фиксируем на момент создания
       post_reactions: reactions,          // фиксируем на момент создания — изменение настройки не трогает старые посты
+      poll_question: hasPollTemplate ? channelPollQuestion : null,
+      poll_options: hasPollTemplate ? channelPollOptions : null,
     });
 
     if (!post) {
@@ -94,19 +79,19 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
       await db.initPostReactions(post.id, reactions);
     }
 
-    // 3. Разобрать #poll из текста и создать опрос в БД (если есть)
-    const pollData = parsePoll(text);
+    // 3. Создать опрос в БД из настроек канала (если включён)
     let pollButtons: unknown[][] = [];
-    if (pollData) {
-      const poll = await db.createPoll(post.id, pollData.question, pollData.options);
+    if (hasPollTemplate) {
+      const options = channelPollOptions!.map(o => o.text);
+      const poll = await db.createPoll(post.id, channelPollQuestion!, options);
       if (poll) {
-        const zeroCounts = pollData.options.map(() => 0);
-        pollButtons = maxClient.buildPollButtons(post.id, pollData.options, zeroCounts);
-        logger.info('Опрос создан для поста', {
+        const zeroCounts = options.map(() => 0);
+        pollButtons = maxClient.buildPollButtons(post.id, options, zeroCounts);
+        logger.info('Опрос из настроек канала создан для поста', {
           postId: post.id,
           pollId: poll.id,
-          question: pollData.question,
-          optionsCount: pollData.options.length,
+          question: channelPollQuestion,
+          optionsCount: options.length,
         });
       }
     }

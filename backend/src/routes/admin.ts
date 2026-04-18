@@ -97,7 +97,9 @@ adminRouter.post('/set-admin', async (req, res) => {
 
 // ─── GET /api/admin/users ────────────────────────────────────────────────────
 
-adminRouter.get('/users', requireAuth, requireAdminUser, async (_req, res) => {
+adminRouter.get('/users', requireAuth, requireAdminUser, async (req, res) => {
+  const limit  = Math.min(parseInt(String(req.query.limit  ?? 50),  10) || 50,  200);
+  const offset = Math.max(parseInt(String(req.query.offset ?? 0),   10) || 0,   0);
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -108,8 +110,9 @@ adminRouter.get('/users', requireAuth, requireAdminUser, async (_req, res) => {
       LEFT JOIN channels c ON c.owner_id = u.id
       GROUP BY u.id
       ORDER BY u.created_at DESC
-    `);
-    res.json(rows.map(r => ({ ...r, id: Number(r.id), max_user_id: Number(r.max_user_id) })));
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
+    res.json(rows.map(r => ({ ...r, id: Number(r.id), max_user_id: String(r.max_user_id) })));
   } catch (err) {
     console.error('GET /api/admin/users error:', err);
     res.status(500).json({ error: 'Ошибка сервера' });
@@ -118,7 +121,9 @@ adminRouter.get('/users', requireAuth, requireAdminUser, async (_req, res) => {
 
 // ─── GET /api/admin/channels ─────────────────────────────────────────────────
 
-adminRouter.get('/channels', requireAuth, requireAdminUser, async (_req, res) => {
+adminRouter.get('/channels', requireAuth, requireAdminUser, async (req, res) => {
+  const limit  = Math.min(parseInt(String(req.query.limit  ?? 50),  10) || 50,  200);
+  const offset = Math.max(parseInt(String(req.query.offset ?? 0),   10) || 0,   0);
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -128,7 +133,8 @@ adminRouter.get('/channels', requireAuth, requireAdminUser, async (_req, res) =>
       FROM channels c
       LEFT JOIN users u ON u.id = c.owner_id
       ORDER BY c.connected_at DESC
-    `);
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
     res.json(rows.map(r => ({ ...r, id: Number(r.id) })));
   } catch (err) {
     console.error('GET /api/admin/channels error:', err);
@@ -319,9 +325,14 @@ adminRouter.get('/payments', requireAuth, requireAdminUser, async (_req, res) =>
 
 // ─── GET /api/admin/promo-codes ───────────────────────────────────────────────
 
-adminRouter.get('/promo-codes', requireAuth, requireAdminUser, async (_req, res) => {
+adminRouter.get('/promo-codes', requireAuth, requireAdminUser, async (req, res) => {
+  const limit  = Math.min(parseInt(String(req.query.limit  ?? 100), 10) || 100, 500);
+  const offset = Math.max(parseInt(String(req.query.offset ?? 0),   10) || 0,   0);
   try {
-    const { rows } = await pool.query('SELECT * FROM promo_codes ORDER BY created_at DESC');
+    const { rows } = await pool.query(
+      'SELECT * FROM promo_codes ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+      [limit, offset]
+    );
     res.json(rows.map(r => ({ ...r, id: Number(r.id) })));
   } catch (err) {
     console.error('GET /api/admin/promo-codes error:', err);

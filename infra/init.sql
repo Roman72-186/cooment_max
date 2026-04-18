@@ -177,3 +177,36 @@ CREATE TABLE IF NOT EXISTS reply_notifications (
 CREATE INDEX IF NOT EXISTS idx_reply_notif_unsent ON reply_notifications(created_at) WHERE sent_at IS NULL;
 
 -- idx_comments_author_id уже создан выше в секции ИНДЕКСЫ (строка 104)
+
+-- ─────────────────────────────────────────────────
+-- СНАПШОТ EMOJI-РЕАКЦИЙ НА МОМЕНТ СОЗДАНИЯ ПОСТА
+-- (migration 003: изменение настроек канала не трогает старые посты)
+-- ─────────────────────────────────────────────────
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS post_reactions TEXT[] NOT NULL DEFAULT '{}';
+
+-- ─────────────────────────────────────────────────
+-- ДИНАМИЧЕСКИЕ НАСТРОЙКИ ПЛАТФОРМЫ
+-- (migration 001: цена и длительность PRO через admin panel)
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS app_settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+-- ─────────────────────────────────────────────────
+-- ПРОМО-КОДЫ
+-- (migration 002)
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS promo_codes (
+  id               BIGSERIAL PRIMARY KEY,
+  code             TEXT UNIQUE NOT NULL,
+  discount_percent INT  NOT NULL CHECK (discount_percent > 0 AND discount_percent <= 100),
+  max_uses         INT,
+  used_count       INT  NOT NULL DEFAULT 0,
+  expires_at       TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Новые колонки в payments (migration 002)
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS promo_code       TEXT;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS discount_percent INT;
