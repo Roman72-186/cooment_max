@@ -141,8 +141,12 @@ describe('onBotStarted', () => {
     await onBotStarted(makeBotStartedUpdate(5, 'New', 'ref_ABC123') as any);
 
     expect(db.pool.query).toHaveBeenCalledWith(
-      expect.stringContaining('SELECT id FROM users WHERE ref_code'),
-      ['ABC123']
+      expect.stringContaining('ref.ref_code = $1'),
+      ['ABC123', 5]
+    );
+    expect(db.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("p.status = 'succeeded'"),
+      ['ABC123', 5]
     );
   });
 });

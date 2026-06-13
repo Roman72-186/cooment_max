@@ -32,6 +32,12 @@ export async function onCallback(update: WebhookUpdate): Promise<void> {
   const payload = callback.payload ?? '';
   const maxUserId = callback.user.user_id;
 
+  // Шапка опроса (не интерактивна): poll_info_<postId>
+  if (payload.startsWith('poll_info_')) {
+    maxClient.answerCallback(callback.callback_id).catch(() => {});
+    return;
+  }
+
   // Голос в опросе: poll_<postId>_<optionIdx>
   const pollMatch = payload.match(/^poll_(\d+)_(\d+)$/);
   if (pollMatch) {
@@ -239,8 +245,22 @@ async function flushPollKeyboard(postId: number): Promise<void> {
   if (row.poll_id) {
     const pollState = await db.getPollWithCounts(postId);
     if (pollState) {
-      pollRows = maxClient.buildPollButtons(postId, pollState.options, pollState.counts);
+      // Подсвечиваем вариант с наибольшим числом голосов — ✅ не пропадает
+      let pollVotedIdx: number | undefined;
+      if (pollState.counts.some(c => c > 0)) {
+        pollVotedIdx = pollState.counts.reduce(
+          (maxIdx, c, idx, arr) => c > arr[maxIdx] ? idx : maxIdx, 0
+        );
+      }
+      pollRows = maxClient.buildPollButtons(postId, pollState.options, pollState.counts, pollVotedIdx, pollState.question);
     }
+  }
+
+  // Подсвечиваем реакцию с наибольшим числом — ✅ не пропадает при клике по опросу
+  let topReactionEmoji: string | undefined;
+  if (orderedReactions.length > 0) {
+    const top = orderedReactions.reduce((a, b) => b.count > a.count ? b : a, orderedReactions[0]);
+    if (top.count > 0) topReactionEmoji = top.emoji;
   }
 
   const keyboard = maxClient.buildPostKeyboard(
@@ -248,7 +268,7 @@ async function flushPollKeyboard(postId: number): Promise<void> {
     row.comment_count,
     orderedReactions,
     row.comments_enabled,
-    undefined,
+    topReactionEmoji,
     pollRows,
   );
   const mediaAttachments = (row.attachments_json ?? []) as Record<string, unknown>[];
@@ -384,7 +404,14 @@ async function flushPostKeyboard(postId: number, selectedEmoji?: string): Promis
   if (row.poll_id) {
     const pollState = await db.getPollWithCounts(postId);
     if (pollState) {
-      pollRows = maxClient.buildPollButtons(postId, pollState.options, pollState.counts);
+      // Подсвечиваем вариант с наибольшим числом голосов — ✅ не пропадает при клике по реакции
+      let pollVotedIdx: number | undefined;
+      if (pollState.counts.some(c => c > 0)) {
+        pollVotedIdx = pollState.counts.reduce(
+          (maxIdx, c, idx, arr) => c > arr[maxIdx] ? idx : maxIdx, 0
+        );
+      }
+      pollRows = maxClient.buildPollButtons(postId, pollState.options, pollState.counts, pollVotedIdx, pollState.question);
     }
   }
 

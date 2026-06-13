@@ -19,7 +19,14 @@ const app = express();
 // Без этого express-rate-limit видит IP nginx, а не реального клиента
 app.set('trust proxy', 1);
 
-app.use(express.json());
+app.use(express.json({ limit: '8mb' }));
+app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err && typeof err === 'object' && 'type' in err && err.type === 'entity.too.large') {
+    res.status(413).json({ error: 'Фото слишком большое. Выберите фото меньше или отправьте одно за раз.' });
+    return;
+  }
+  next(err);
+});
 
 // ── Request Logging ────────────────────────────────────────────────────────
 app.use((req, res, next) => {

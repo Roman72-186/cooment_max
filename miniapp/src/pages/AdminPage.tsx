@@ -1,5 +1,5 @@
 // Панель администратора — доступна только пользователям с is_admin = true
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useAppStore } from '../store/useAppStore';
 import {
   adminGetUsers, adminGetChannels, adminGetPayments, adminGetPromoCodes,
@@ -7,26 +7,26 @@ import {
   adminToggleChannel, adminDeleteChannel,
   adminGetSettings, adminUpdateSettings,
   adminCreatePromoCode, adminDeletePromoCode,
+  adminGetReferralStats, adminAdjustReferralBalance,
   type AdminUser, type AdminChannel, type AdminPayment, type PromoCode,
+  type AdminReferralStats, type AdminReferralReferrer,
 } from '../api/backend';
 
-type Tab = 'users' | 'channels' | 'payments' | 'settings';
+type Tab = 'users' | 'channels' | 'payments' | 'referrals' | 'settings';
 
-interface ConfirmState {
-  message: string;
-  onConfirm: () => void;
-}
+const ADMIN_PAGE_SIZE = 30;
 
 export function AdminPage() {
   const { setPage } = useAppStore();
+  const addToast = useAppStore((s) => s.addToast);
+  const requestConfirm = useAppStore((s) => s.requestConfirm);
   const [tab, setTab] = useState<Tab>('users');
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [channels, setChannels] = useState<AdminChannel[]>([]);
   const [payments, setPayments] = useState<AdminPayment[]>([]);
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
+  const [referralStats, setReferralStats] = useState<AdminReferralStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
 
   // Настройки
   const [settings, setSettings] = useState<{ pro_price_rub: number; pro_days: number } | null>(null);
@@ -39,6 +39,15 @@ export function AdminPage() {
   const [planFilter, setPlanFilter] = useState<'all' | 'free' | 'pro'>('all');
   const [channelSearch, setChannelSearch] = useState('');
   const [channelFilter, setChannelFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [referralSearch, setReferralSearch] = useState('');
+
+  // Пагинация
+  const [usersVisible, setUsersVisible] = useState(ADMIN_PAGE_SIZE);
+  const [channelsVisible, setChannelsVisible] = useState(ADMIN_PAGE_SIZE);
+
+  // Refs для IntersectionObserver
+  const usersEndRef = useRef<HTMLDivElement>(null);
+  const channelsEndRef = useRef<HTMLDivElement>(null);
 
   // Промо-коды — форма создания
   const [promoCode, setPromoCode] = useState('');
@@ -47,25 +56,33 @@ export function AdminPage() {
   const [promoExpires, setPromoExpires] = useState('');
   const [promoCreating, setPromoCreating] = useState(false);
 
+  // Реферальный баланс — ручные корректировки
+  const [adjustingReferralId, setAdjustingReferralId] = useState<number | null>(null);
+  const [adjustAmount, setAdjustAmount] = useState('');
+  const [adjustReason, setAdjustReason] = useState('');
+  const [adjustSaving, setAdjustSaving] = useState(false);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [u, c, p, pc, s] = await Promise.all([
+      const [u, c, p, pc, s, r] = await Promise.all([
         adminGetUsers(),
         adminGetChannels(),
         adminGetPayments(),
         adminGetPromoCodes(),
         adminGetSettings(),
+        adminGetReferralStats(),
       ]);
       setUsers(u);
       setChannels(c);
       setPayments(p);
       setPromoCodes(pc);
       setSettings(s);
+      setReferralStats(r);
       setPriceInput(String(s.pro_price_rub));
       setDaysInput(String(s.pro_days));
     } catch {
-      setActionError('Не удалось загрузить данные');
+      addToast({ type: 'error', message: 'Не удалось загрузить данные' });
     } finally {
       setLoading(false);
     }
@@ -73,9 +90,16 @@ export function AdminPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const askConfirm = (message: string, onConfirm: () => void) => {
-    setConfirm({ message, onConfirm });
-  };
+  // Сбрасываем пагинацию при изменении фильтров пользователей
+  useEffect(() => {
+    setUsersVisible(ADMIN_PAGE_SIZE);
+  }, [userSearch, planFilter]);
+
+  // Сбрасываем пагинацию при изменении фильтров каналов
+  useEffect(() => {
+    setChannelsVisible(ADMIN_PAGE_SIZE);
+  }, [channelSearch, channelFilter]);
+
 
   // ─── Настройки ───────────────────────────────────────────────────
 
@@ -83,15 +107,16 @@ export function AdminPage() {
     const price = parseInt(priceInput, 10);
     const days  = parseInt(daysInput, 10);
     if (isNaN(price) || price < 1 || isNaN(days) || days < 1 || days > 365) {
-      setActionError('Неверные значения');
+      addToast({ type: 'error', message: 'Неверные значения' });
       return;
     }
     setSettingsSaving(true);
     try {
       await adminUpdateSettings({ pro_price_rub: price, pro_days: days });
       setSettings({ pro_price_rub: price, pro_days: days });
+      addToast({ type: 'success', message: 'Настройки сохранены' });
     } catch {
-      setActionError('Ошибка сохранения');
+      addToast({ type: 'error', message: 'Ошибка сохранения' });
     } finally {
       setSettingsSaving(false);
     }
@@ -104,26 +129,28 @@ export function AdminPage() {
     try {
       await adminUpdateUser(userId, { plan: 'pro', days: d });
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, plan: 'pro' } : u));
-    } catch { setActionError('Ошибка при выдаче PRO'); }
+    } catch { addToast({ type: 'error', message: 'Ошибка при выдаче PRO' }); }
   };
 
   const removePro = async (userId: number) => {
     try {
       await adminUpdateUser(userId, { plan: 'free' });
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, plan: 'free', plan_expires: null } : u));
-    } catch { setActionError('Ошибка при снятии PRO'); }
+    } catch { addToast({ type: 'error', message: 'Ошибка при снятии PRO' }); }
   };
 
   const deleteUser = (userId: number, name: string | null) => {
-    askConfirm(
-      `Удалить пользователя «${name ?? userId}»? Все его каналы тоже удалятся.`,
-      async () => {
+    requestConfirm({
+      message: `Удалить пользователя «${name ?? userId}»? Все его каналы тоже удалятся.`,
+      variant: 'danger',
+      confirmLabel: 'Удалить',
+      onConfirm: async () => {
         try {
           await adminDeleteUser(userId);
           setUsers(prev => prev.filter(u => u.id !== userId));
-        } catch { setActionError('Ошибка при удалении пользователя'); }
+        } catch { addToast({ type: 'error', message: 'Ошибка при удалении пользователя' }); }
       }
-    );
+    });
   };
 
   // ─── Каналы ──────────────────────────────────────────────────────
@@ -132,19 +159,21 @@ export function AdminPage() {
     try {
       await adminToggleChannel(ch.id, !ch.is_active);
       setChannels(prev => prev.map(c => c.id === ch.id ? { ...c, is_active: !c.is_active } : c));
-    } catch { setActionError('Ошибка при изменении канала'); }
+    } catch { addToast({ type: 'error', message: 'Ошибка при изменении канала' }); }
   };
 
   const deleteChannel = (channelId: number, name: string | null) => {
-    askConfirm(
-      `Удалить канал «${name ?? channelId}»?`,
-      async () => {
+    requestConfirm({
+      message: `Удалить канал «${name ?? channelId}»?`,
+      variant: 'danger',
+      confirmLabel: 'Удалить',
+      onConfirm: async () => {
         try {
           await adminDeleteChannel(channelId);
           setChannels(prev => prev.filter(c => c.id !== channelId));
-        } catch { setActionError('Ошибка при удалении канала'); }
+        } catch { addToast({ type: 'error', message: 'Ошибка при удалении канала' }); }
       }
-    );
+    });
   };
 
   // ─── Промо-коды ──────────────────────────────────────────────────
@@ -152,9 +181,9 @@ export function AdminPage() {
   const createPromo = async () => {
     const discount = parseInt(promoDiscount, 10);
     const maxUses  = promoMaxUses ? parseInt(promoMaxUses, 10) : null;
-    if (!promoCode.trim()) { setActionError('Введите код'); return; }
-    if (isNaN(discount) || discount < 1 || discount > 100) { setActionError('Скидка 1–100%'); return; }
-    if (maxUses !== null && (isNaN(maxUses) || maxUses < 1)) { setActionError('Макс. использований > 0'); return; }
+    if (!promoCode.trim()) { addToast({ type: 'error', message: 'Введите код' }); return; }
+    if (isNaN(discount) || discount < 1 || discount > 100) { addToast({ type: 'error', message: 'Скидка 1–100%' }); return; }
+    if (maxUses !== null && (isNaN(maxUses) || maxUses < 1)) { addToast({ type: 'error', message: 'Макс. использований > 0' }); return; }
 
     setPromoCreating(true);
     try {
@@ -169,20 +198,73 @@ export function AdminPage() {
       setPromoDiscount('20');
       setPromoMaxUses('');
       setPromoExpires('');
+      addToast({ type: 'success', message: 'Промо-код создан' });
     } catch (err: any) {
-      setActionError(err?.response?.data?.error ?? 'Ошибка создания кода');
+      addToast({ type: 'error', message: err?.response?.data?.error ?? 'Ошибка создания кода' });
     } finally {
       setPromoCreating(false);
     }
   };
 
   const deletePromo = (code: string) => {
-    askConfirm(`Удалить промо-код «${code}»?`, async () => {
-      try {
-        await adminDeletePromoCode(code);
-        setPromoCodes(prev => prev.filter(p => p.code !== code));
-      } catch { setActionError('Ошибка удаления промо-кода'); }
+    requestConfirm({
+      message: `Удалить промо-код «${code}»?`,
+      variant: 'danger',
+      confirmLabel: 'Удалить',
+      onConfirm: async () => {
+        try {
+          await adminDeletePromoCode(code);
+          setPromoCodes(prev => prev.filter(p => p.code !== code));
+        } catch { addToast({ type: 'error', message: 'Ошибка удаления промо-кода' }); }
+      }
     });
+  };
+
+  // ─── Рефералы ──────────────────────────────────────────────────
+
+  const formatRub = (value: number) => value.toLocaleString('ru-RU', {
+    minimumFractionDigits: value % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+
+  const startAdjustReferral = (referrer: AdminReferralReferrer, mode: 'add' | 'subtract') => {
+    setAdjustingReferralId(referrer.id);
+    setAdjustAmount(mode === 'add' ? '' : '-');
+    setAdjustReason('');
+  };
+
+  const cancelAdjustReferral = () => {
+    setAdjustingReferralId(null);
+    setAdjustAmount('');
+    setAdjustReason('');
+  };
+
+  const saveReferralAdjustment = async (referrerId: number) => {
+    const normalizedAmount = Number(adjustAmount.replace(',', '.'));
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount === 0) {
+      addToast({ type: 'error', message: 'Введите сумму со знаком' });
+      return;
+    }
+    if (!adjustReason.trim()) {
+      addToast({ type: 'error', message: 'Укажите причину' });
+      return;
+    }
+
+    setAdjustSaving(true);
+    try {
+      await adminAdjustReferralBalance(referrerId, {
+        amount_rub: normalizedAmount,
+        reason: adjustReason.trim(),
+      });
+      const updated = await adminGetReferralStats();
+      setReferralStats(updated);
+      cancelAdjustReferral();
+      addToast({ type: 'success', message: normalizedAmount > 0 ? 'Баллы начислены' : 'Баллы списаны' });
+    } catch (err: any) {
+      addToast({ type: 'error', message: err?.response?.data?.error ?? 'Ошибка корректировки баланса' });
+    } finally {
+      setAdjustSaving(false);
+    }
   };
 
   // ─── Вычисляемые значения ─────────────────────────────────────────
@@ -219,6 +301,49 @@ export function AdminPage() {
     });
   }, [channels, channelSearch, channelFilter]);
 
+  const filteredReferrals = useMemo(() => {
+    const q = referralSearch.toLowerCase();
+    return (referralStats?.referrers ?? []).filter((r) => {
+      if (!q) return true;
+      return (
+        (r.name ?? '').toLowerCase().includes(q) ||
+        (r.username ?? '').toLowerCase().includes(q) ||
+        String(r.max_user_id).includes(q) ||
+        (r.ref_code ?? '').toLowerCase().includes(q)
+      );
+    });
+  }, [referralStats, referralSearch]);
+
+  // IntersectionObserver для автозагрузки пользователей
+  useEffect(() => {
+    if (!usersEndRef.current) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && usersVisible < filteredUsers.length) {
+          setUsersVisible((c) => c + ADMIN_PAGE_SIZE);
+        }
+      },
+      { threshold: 0.1 }
+    );
+    obs.observe(usersEndRef.current);
+    return () => obs.disconnect();
+  }, [usersVisible, filteredUsers.length]);
+
+  // IntersectionObserver для автозагрузки каналов
+  useEffect(() => {
+    if (!channelsEndRef.current) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && channelsVisible < filteredChannels.length) {
+          setChannelsVisible((c) => c + ADMIN_PAGE_SIZE);
+        }
+      },
+      { threshold: 0.1 }
+    );
+    obs.observe(channelsEndRef.current);
+    return () => obs.disconnect();
+  }, [channelsVisible, filteredChannels.length]);
+
   return (
     <div className="page">
       <header className="page-header">
@@ -226,30 +351,15 @@ export function AdminPage() {
           <button className="btn-back" onClick={() => setPage({ id: 'dashboard' })}>← Назад</button>
           <h1 className="page-title">Администрирование</h1>
         </div>
+        <div className="dashboard-header__actions">
+          <button className="btn btn--ghost btn--sm" onClick={load} disabled={loading}>
+            {loading ? '...' : 'Обновить'}
+          </button>
+        </div>
       </header>
 
       <main className="page-content">
 
-        {/* Диалог подтверждения */}
-        {confirm && (
-          <div className="confirm-overlay">
-            <div className="confirm-dialog">
-              <p className="confirm-dialog__msg">{confirm.message}</p>
-              <div className="confirm-dialog__btns">
-                <button
-                  className="btn btn--primary"
-                  style={{ background: 'var(--error)' }}
-                  onClick={() => { confirm.onConfirm(); setConfirm(null); }}
-                >
-                  Удалить
-                </button>
-                <button className="btn btn--ghost" onClick={() => setConfirm(null)}>
-                  Отмена
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Глобальная статистика */}
         <div className="admin-stats">
@@ -271,11 +381,6 @@ export function AdminPage() {
           </div>
         </div>
 
-        {actionError && (
-          <div className="alert alert--error" onClick={() => setActionError(null)}>
-            {actionError}
-          </div>
-        )}
 
         {/* Табы */}
         <div className="admin-tabs">
@@ -287,6 +392,9 @@ export function AdminPage() {
           </button>
           <button className={`admin-tab ${tab === 'payments' ? 'admin-tab--active' : ''}`} onClick={() => setTab('payments')}>
             Платежи
+          </button>
+          <button className={`admin-tab ${tab === 'referrals' ? 'admin-tab--active' : ''}`} onClick={() => setTab('referrals')}>
+            Рефералы
           </button>
           <button className={`admin-tab ${tab === 'settings' ? 'admin-tab--active' : ''}`} onClick={() => setTab('settings')}>
             Настройки
@@ -314,7 +422,7 @@ export function AdminPage() {
               </select>
             </div>
             <div className="admin-list">
-              {filteredUsers.map(u => (
+              {filteredUsers.slice(0, usersVisible).map(u => (
                 <div key={u.id} className="admin-card">
                   <div className="admin-card__main">
                     <div className="admin-card__name">
@@ -342,6 +450,9 @@ export function AdminPage() {
                   </div>
                 </div>
               ))}
+              {usersVisible < filteredUsers.length && (
+                <div ref={usersEndRef} style={{ height: 1 }} />
+              )}
               {filteredUsers.length === 0 && (
                 <div className="empty-state"><span>Ничего не найдено</span></div>
               )}
@@ -364,7 +475,7 @@ export function AdminPage() {
               </select>
             </div>
             <div className="admin-list">
-              {filteredChannels.map(ch => (
+              {filteredChannels.slice(0, channelsVisible).map(ch => (
                 <div key={ch.id} className="admin-card">
                   <div className="admin-card__main">
                     <div className="admin-card__name">
@@ -388,6 +499,9 @@ export function AdminPage() {
                   </div>
                 </div>
               ))}
+              {channelsVisible < filteredChannels.length && (
+                <div ref={channelsEndRef} style={{ height: 1 }} />
+              )}
               {filteredChannels.length === 0 && (
                 <div className="empty-state"><span>Ничего не найдено</span></div>
               )}
@@ -396,7 +510,7 @@ export function AdminPage() {
 
         ) : tab === 'payments' ? (
           <>
-            <div className="admin-stats" style={{ marginBottom: 16 }}>
+            <div className="admin-stats admin-stats--section">
               <div className="admin-stat">
                 <span className="admin-stat__val">{payments.filter(p => p.status === 'succeeded').length}</span>
                 <span className="admin-stat__lbl">оплачено</span>
@@ -413,44 +527,150 @@ export function AdminPage() {
             {payments.length === 0 ? (
               <div className="empty-state"><span>Нет платежей</span></div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
+              <div className="payment-table-wrap">
                 <table className="payment-table">
                   <thead>
                     <tr>
-                      <th style={{ textAlign: 'left', padding: '8px 6px', color: 'var(--text-secondary)', fontWeight: 500, fontSize: 12 }}>Пользователь</th>
-                      <th style={{ textAlign: 'right', padding: '8px 6px', color: 'var(--text-secondary)', fontWeight: 500, fontSize: 12 }}>Сумма</th>
-                      <th style={{ padding: '8px 6px', color: 'var(--text-secondary)', fontWeight: 500, fontSize: 12 }}>Промо</th>
-                      <th style={{ padding: '8px 6px', color: 'var(--text-secondary)', fontWeight: 500, fontSize: 12 }}>Статус</th>
-                      <th style={{ padding: '8px 6px', color: 'var(--text-secondary)', fontWeight: 500, fontSize: 12 }}>Дата</th>
+                      <th className="payment-th payment-th--left">Пользователь</th>
+                      <th className="payment-th payment-th--right">Сумма</th>
+                      <th className="payment-th">Промо</th>
+                      <th className="payment-th">Статус</th>
+                      <th className="payment-th">Дата</th>
                     </tr>
                   </thead>
                   <tbody>
                     {payments.map(p => (
                       <tr key={p.id} className="payment-row">
-                        <td style={{ padding: '10px 6px', fontSize: 13 }}>
+                        <td className="payment-cell">
                           {p.user_name ?? `ID ${p.max_user_id}`}
                         </td>
-                        <td style={{ padding: '10px 6px', fontSize: 13, textAlign: 'right' }}>
+                        <td className="payment-cell payment-cell--right">
                           {Number(p.amount_rub)} ₽
                           {p.discount_percent && (
-                            <span style={{ color: '#4ade80', fontSize: 11, marginLeft: 4 }}>-{p.discount_percent}%</span>
+                            <span className="payment-discount">-{p.discount_percent}%</span>
                           )}
                         </td>
-                        <td style={{ padding: '10px 6px', fontSize: 12, fontFamily: 'monospace' }}>
+                        <td className="payment-cell payment-cell--code">
                           {p.promo_code ?? '—'}
                         </td>
-                        <td style={{ padding: '10px 6px' }}>
-                          <span className={`payment-status--${p.status}`} style={{ fontSize: 12 }}>
+                        <td className="payment-cell">
+                          <span className={`payment-status payment-status--${p.status}`}>
                             {p.status === 'succeeded' ? 'оплачен' : p.status === 'pending' ? 'ожидает' : 'отменён'}
                           </span>
                         </td>
-                        <td style={{ padding: '10px 6px', fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                        <td className="payment-cell payment-cell--date">
                           {new Date(p.created_at).toLocaleDateString('ru-RU')}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+              </div>
+            )}
+          </>
+
+        ) : tab === 'referrals' ? (
+          <>
+            <div className="admin-stats admin-stats--referrals">
+              <div className="admin-stat">
+                <span className="admin-stat__val">{referralStats?.summary.invited ?? 0}</span>
+                <span className="admin-stat__lbl">приглашено</span>
+              </div>
+              <div className="admin-stat">
+                <span className="admin-stat__val">{referralStats?.summary.converted ?? 0}</span>
+                <span className="admin-stat__lbl">купили PRO</span>
+              </div>
+              <div className="admin-stat">
+                <span className="admin-stat__val">{formatRub(referralStats?.summary.commission_earned_rub ?? 0)} ₽</span>
+                <span className="admin-stat__lbl">комиссий</span>
+              </div>
+              <div className="admin-stat">
+                <span className="admin-stat__val">{formatRub(referralStats?.summary.balance_rub ?? 0)} ₽</span>
+                <span className="admin-stat__lbl">баланс</span>
+              </div>
+            </div>
+
+            <div className="admin-filter-row">
+              <input
+                className="admin-filter-input"
+                placeholder="Поиск по имени, ID или реф-коду..."
+                value={referralSearch}
+                onChange={e => setReferralSearch(e.target.value)}
+              />
+            </div>
+
+            <div className="admin-list">
+              {filteredReferrals.map((r) => (
+                <div key={r.id} className="admin-card admin-card--referral">
+                  <div className="admin-card__main">
+                    <div className="admin-card__name">
+                      {r.name ?? `ID ${r.max_user_id}`}
+                      <span className="admin-badge admin-badge--admin">{r.current_rate_percent}%</span>
+                    </div>
+                    <div className="admin-card__meta">
+                      ID {r.max_user_id} · код {r.ref_code ?? '—'} · {r.invited} приглашено · {r.converted} оплатили · +{r.days_earned} дней PRO
+                    </div>
+                    <div className="referral-admin-metrics">
+                      <span>Комиссии: {formatRub(r.commission_earned_rub)} ₽</span>
+                      <span>Корректировки: {r.manual_adjustments_rub >= 0 ? '+' : ''}{formatRub(r.manual_adjustments_rub)} ₽</span>
+                      <span className={r.balance_rub < 0 ? 'referral-balance referral-balance--negative' : 'referral-balance'}>
+                        Баланс: {formatRub(r.balance_rub)} ₽
+                      </span>
+                    </div>
+                    {adjustingReferralId === r.id && (
+                      <div className="referral-adjust-form">
+                        <input
+                          className="admin-settings__input"
+                          placeholder="Сумма, например 150 или -150"
+                          inputMode="decimal"
+                          value={adjustAmount}
+                          onChange={e => setAdjustAmount(e.target.value)}
+                        />
+                        <input
+                          className="admin-settings__input"
+                          placeholder="Причина"
+                          value={adjustReason}
+                          onChange={e => setAdjustReason(e.target.value)}
+                        />
+                        <div className="referral-adjust-form__actions">
+                          <button className="btn btn--ghost btn--xs" onClick={() => saveReferralAdjustment(r.id)} disabled={adjustSaving}>
+                            {adjustSaving ? 'Сохраняю...' : 'Сохранить'}
+                          </button>
+                          <button className="btn btn--xs admin-btn--danger" onClick={cancelAdjustReferral}>
+                            Отмена
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="admin-card__actions">
+                    <button className="btn btn--ghost btn--xs" onClick={() => startAdjustReferral(r, 'add')}>
+                      Начислить
+                    </button>
+                    <button className="btn btn--xs admin-btn--danger" onClick={() => startAdjustReferral(r, 'subtract')}>
+                      Списать
+                    </button>
+                  </div>
+                </div>
+              ))}
+              {filteredReferrals.length === 0 && (
+                <div className="empty-state"><span>Реферальных начислений пока нет</span></div>
+              )}
+            </div>
+
+            {(referralStats?.adjustments.length ?? 0) > 0 && (
+              <div className="referral-adjustments-log">
+                <div className="admin-settings__label">Последние ручные операции</div>
+                {referralStats!.adjustments.map((a) => (
+                  <div key={a.id} className="referral-adjustment-row">
+                    <span className={a.amount_rub < 0 ? 'referral-balance referral-balance--negative' : 'referral-balance'}>
+                      {a.amount_rub > 0 ? '+' : ''}{formatRub(a.amount_rub)} ₽
+                    </span>
+                    <span>{a.referrer_name ?? `ID ${a.referrer_max_user_id}`}</span>
+                    <span>{a.reason}</span>
+                    <span>{new Date(a.created_at).toLocaleDateString('ru-RU')}</span>
+                  </div>
+                ))}
               </div>
             )}
           </>
@@ -490,8 +710,8 @@ export function AdminPage() {
             )}
 
             {/* Промо-коды */}
-            <div style={{ marginTop: 24, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 20 }}>
-              <div className="admin-settings__label" style={{ fontSize: 14, marginBottom: 12, color: 'var(--text-primary)' }}>
+            <div className="admin-settings-group">
+              <div className="admin-settings__label admin-settings__label--section">
                 Промо-коды
               </div>
 
@@ -499,40 +719,36 @@ export function AdminPage() {
               <div className="promo-form">
                 <div className="promo-input-row">
                   <input
-                    className="admin-settings__input"
                     placeholder="Код (напр. SUMMER20)"
                     value={promoCode}
                     onChange={e => setPromoCode(e.target.value.toUpperCase())}
-                    style={{ flex: 2 }}
+                    className="admin-settings__input promo-input--code"
                   />
                   <input
-                    className="admin-settings__input"
                     type="number"
                     min="1"
                     max="100"
                     placeholder="Скидка %"
                     value={promoDiscount}
                     onChange={e => setPromoDiscount(e.target.value)}
-                    style={{ flex: 1 }}
+                    className="admin-settings__input promo-input--short"
                   />
                 </div>
                 <div className="promo-input-row">
                   <input
-                    className="admin-settings__input"
                     type="number"
                     min="1"
                     placeholder="Макс. использований (пусто = ∞)"
                     value={promoMaxUses}
                     onChange={e => setPromoMaxUses(e.target.value)}
-                    style={{ flex: 1 }}
+                    className="admin-settings__input promo-input--short"
                   />
                   <input
-                    className="admin-settings__input"
                     type="date"
                     placeholder="Действует до"
                     value={promoExpires}
                     onChange={e => setPromoExpires(e.target.value)}
-                    style={{ flex: 1 }}
+                    className="admin-settings__input promo-input--short"
                   />
                 </div>
                 <button className="btn btn--ghost" onClick={createPromo} disabled={promoCreating}>
@@ -543,19 +759,19 @@ export function AdminPage() {
               {/* Список кодов */}
               <div className="promo-list">
                 {promoCodes.length === 0 && (
-                  <div style={{ fontSize: 13, color: 'var(--text-secondary)', textAlign: 'center', padding: '12px 0' }}>
+                  <div className="promo-empty">
                     Нет промо-кодов
                   </div>
                 )}
                 {promoCodes.map(p => (
                   <div key={p.code} className="promo-row">
                     <span className="promo-code-tag">{p.code}</span>
-                    <span style={{ fontSize: 12, color: '#4ade80' }}>-{p.discount_percent}%</span>
-                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    <span className="promo-discount">-{p.discount_percent}%</span>
+                    <span className="promo-usage">
                       {p.used_count}/{p.max_uses ?? '∞'}
                     </span>
                     {p.expires_at && (
-                      <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>
+                      <span className="promo-expiry">
                         до {new Date(p.expires_at).toLocaleDateString('ru-RU')}
                       </span>
                     )}

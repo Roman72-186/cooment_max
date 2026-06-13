@@ -4,13 +4,108 @@
 import { Router } from 'express';
 import { pool, upsertUser } from '../db/db.js';
 import { requireAuth, optionalAuth } from '../middleware/auth.js';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout.js';
+import { isActivePro } from '../utils/plans.js';
 
 // URL внутреннего сервиса бота (доступен только внутри Docker-сети)
 const BOT_INTERNAL_URL = process.env.BOT_INTERNAL_URL ?? 'http://mc_bot:3000';
+const MAX_COMMENT_ATTACHMENTS = 4;
+const MAX_IMAGE_DATA_URL_LENGTH = 1_400_000;
+
+type CommentAttachment =
+  | {
+      type: 'image';
+      url: string;
+      width?: number;
+      height?: number;
+      mime_type?: string;
+      filename?: string;
+      size?: number;
+    }
+  | {
+      type: 'sticker';
+      sticker_id: string;
+      emoji: string;
+      label?: string;
+    };
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function sanitizeCommentAttachments(raw: unknown): { attachments: CommentAttachment[]; error?: string } {
+  if (raw == null) return { attachments: [] };
+  if (!Array.isArray(raw)) return { attachments: [], error: 'Некорректный формат вложений' };
+  if (raw.length > MAX_COMMENT_ATTACHMENTS) {
+    return { attachments: [], error: `Можно прикрепить не больше ${MAX_COMMENT_ATTACHMENTS} вложений` };
+  }
+
+  const attachments: CommentAttachment[] = [];
+
+  for (const item of raw) {
+    if (!isPlainRecord(item) || typeof item.type !== 'string') {
+      return { attachments: [], error: 'Некорректное вложение' };
+    }
+
+    if (item.type === 'image') {
+      if (typeof item.url !== 'string' || !/^data:image\/(jpeg|png|webp);base64,/i.test(item.url)) {
+        return { attachments: [], error: 'Фото должно быть изображением JPEG, PNG или WebP' };
+      }
+      if (item.url.length > MAX_IMAGE_DATA_URL_LENGTH) {
+        return { attachments: [], error: 'Фото слишком большое' };
+      }
+
+      const width = typeof item.width === 'number' && Number.isFinite(item.width)
+        ? Math.round(item.width)
+        : undefined;
+      const height = typeof item.height === 'number' && Number.isFinite(item.height)
+        ? Math.round(item.height)
+        : undefined;
+      const size = typeof item.size === 'number' && Number.isFinite(item.size)
+        ? Math.round(item.size)
+        : undefined;
+
+      attachments.push({
+        type: 'image',
+        url: item.url,
+        ...(width ? { width: Math.min(width, 4096) } : {}),
+        ...(height ? { height: Math.min(height, 4096) } : {}),
+        ...(typeof item.mime_type === 'string' ? { mime_type: item.mime_type.slice(0, 64) } : {}),
+        ...(typeof item.filename === 'string' ? { filename: item.filename.slice(0, 120) } : {}),
+        ...(size ? { size } : {}),
+      });
+      continue;
+    }
+
+    if (item.type === 'sticker') {
+      if (typeof item.sticker_id !== 'string' || !/^[a-z0-9_-]{1,40}$/i.test(item.sticker_id)) {
+        return { attachments: [], error: 'Некорректный стикер' };
+      }
+      if (typeof item.emoji !== 'string' || item.emoji.length < 1 || item.emoji.length > 16) {
+        return { attachments: [], error: 'Некорректный стикер' };
+      }
+
+      attachments.push({
+        type: 'sticker',
+        sticker_id: item.sticker_id,
+        emoji: item.emoji,
+        ...(typeof item.label === 'string' ? { label: item.label.slice(0, 40) } : {}),
+      });
+      continue;
+    }
+
+    return { attachments: [], error: 'Поддерживаются только фото и стикеры' };
+  }
+
+  return { attachments };
+}
 
 // Попросить бота немедленно обновить кнопку поста — fire-and-forget
 function triggerCounterUpdate(postId: number): void {
-  fetch(`${BOT_INTERNAL_URL}/internal/update-post/${postId}`, { method: 'POST' })
+  fetchWithTimeout(`${BOT_INTERNAL_URL}/internal/update-post/${postId}`, {
+    method: 'POST',
+    timeoutMs: 1500,
+  })
     .catch(() => {});
 }
 
@@ -24,10 +119,19 @@ commentsRouter.get('/', optionalAuth, async (req, res) => {
     return;
   }
 
+  const afterIdParam = req.query.after_id as string | undefined;
+  const afterId = afterIdParam ? parseInt(afterIdParam, 10) : null;
+  if (afterIdParam && (afterId === null || isNaN(afterId))) {
+    res.status(400).json({ error: 'Неверный after_id' });
+    return;
+  }
+
   try {
     // MAX user ID текущего пользователя (0 = анонимный).
     // DB ID резолвится через subquery внутри SQL — убирает отдельный round-trip к БД.
     const currentUserMaxId: number = req.maxUser?.user_id ?? 0;
+    const params: number[] = [postId, currentUserMaxId];
+    const afterFilter = afterId !== null ? `AND c.id > $${params.push(afterId)}` : '';
 
     const { rows } = await pool.query(
       `SELECT
@@ -39,6 +143,7 @@ commentsRouter.get('/', optionalAuth, async (req, res) => {
          u.max_user_id       AS author_max_id,
          c.parent_id,
          c.text,
+         COALESCE(c.attachments_json, '[]'::jsonb) AS attachments_json,
          c.is_hidden,
          c.created_at,
          COALESCE(owner_u.max_user_id, 0)          AS channel_owner_max_id,
@@ -54,9 +159,10 @@ commentsRouter.get('/', optionalAuth, async (req, res) => {
        LEFT JOIN users owner_u    ON owner_u.id = ch.owner_id
        LEFT JOIN comment_reactions r ON r.comment_id = c.id
        WHERE c.post_id = $1 AND c.is_hidden = false
+         ${afterFilter}
        GROUP BY c.id, u.name, u.username, u.max_user_id, owner_u.max_user_id, ch.id
        ORDER BY c.created_at ASC`,
-      [postId, currentUserMaxId]
+      params
     );
 
     // Загружаем emoji-реакции для всех комментариев одним запросом
@@ -123,6 +229,7 @@ commentsRouter.get('/feed', requireAuth, async (req, res) => {
       `SELECT
          c.id,
          c.text,
+         COALESCE(c.attachments_json, '[]'::jsonb) AS attachments_json,
          c.created_at,
          u.name                       AS author_name,
          p.id                         AS post_id,
@@ -159,19 +266,27 @@ commentsRouter.get('/feed', requireAuth, async (req, res) => {
 
 // POST /api/comments
 commentsRouter.post('/', requireAuth, async (req, res) => {
-  const { post_id, text, parent_id } = req.body as {
+  const { post_id, text, parent_id, attachments } = req.body as {
     post_id: number;
-    text: string;
+    text?: string;
     parent_id?: number | null;
+    attachments?: unknown;
   };
   const maxUser = req.maxUser!;
+  const trimmedText = typeof text === 'string' ? text.trim() : '';
+  const { attachments: cleanAttachments, error: attachmentsError } = sanitizeCommentAttachments(attachments);
 
-  if (!post_id || !text?.trim()) {
-    res.status(400).json({ error: 'Укажите post_id и text' });
+  if (attachmentsError) {
+    res.status(400).json({ error: attachmentsError });
     return;
   }
 
-  if (text.length > 2000) {
+  if (!post_id || (!trimmedText && cleanAttachments.length === 0)) {
+    res.status(400).json({ error: 'Добавьте текст, фото или стикер' });
+    return;
+  }
+
+  if (trimmedText.length > 2000) {
     res.status(400).json({ error: 'Комментарий слишком длинный (макс. 2000 символов)' });
     return;
   }
@@ -203,13 +318,31 @@ commentsRouter.post('/', requireAuth, async (req, res) => {
     }
 
     // Проверяем стоп-слова канала и бан пользователя
-    const { rows: chRows } = await pool.query(
-      `SELECT ch.id AS channel_id, ch.banned_words FROM posts p JOIN channels ch ON ch.id = p.channel_id WHERE p.id = $1`,
+    const { rows: chRows } = await pool.query<{
+      channel_id: number;
+      banned_words: string[] | null;
+      plan: string | null;
+      plan_expires: string | null;
+    }>(
+      `SELECT ch.id AS channel_id, ch.banned_words, owner.plan, owner.plan_expires
+         FROM posts p
+         JOIN channels ch ON ch.id = p.channel_id
+         JOIN users owner ON owner.id = ch.owner_id
+        WHERE p.id = $1`,
       [post_id]
     );
 
     if (!chRows[0]) {
       res.status(404).json({ error: 'Пост не найден' });
+      return;
+    }
+
+    const channelOwnerIsPro = isActivePro(chRows[0]);
+    if (cleanAttachments.length > 0 && !channelOwnerIsPro) {
+      res.status(403).json({
+        error: 'Фото и стикеры в комментариях доступны в PRO-каналах',
+        requires_pro: true,
+      });
       return;
     }
 
@@ -236,15 +369,15 @@ commentsRouter.post('/', requireAuth, async (req, res) => {
         return;
       }
     }
-    const bannedWords: string[] = chRows[0]?.banned_words ?? [];
-    const lowerText = text.trim().toLowerCase();
+    const bannedWords: string[] = channelOwnerIsPro ? (chRows[0]?.banned_words ?? []) : [];
+    const lowerText = trimmedText.toLowerCase();
     const isHidden = bannedWords.some((w) => lowerText.includes(w.toLowerCase()));
 
     const { rows } = await pool.query(
-      `INSERT INTO comments (post_id, author_id, parent_id, text, is_hidden)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, post_id, author_id, parent_id, text, is_hidden, created_at`,
-      [post_id, authorId, parent_id ?? null, text.trim(), isHidden]
+      `INSERT INTO comments (post_id, author_id, parent_id, text, attachments_json, is_hidden)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6)
+       RETURNING id, post_id, author_id, parent_id, text, attachments_json, is_hidden, created_at`,
+      [post_id, authorId, parent_id ?? null, trimmedText, JSON.stringify(cleanAttachments), isHidden]
     );
 
     // Счётчик и метка активности обновляем только если комментарий виден
@@ -287,6 +420,7 @@ commentsRouter.post('/', requireAuth, async (req, res) => {
       author_id:       Number(row.author_id),
       parent_id:       row.parent_id != null ? Number(row.parent_id) : null,
       text:            row.text,
+      attachments_json: row.attachments_json ?? [],
       is_hidden:       row.is_hidden,
       created_at:      row.created_at,
       author_name:     maxUser.name,

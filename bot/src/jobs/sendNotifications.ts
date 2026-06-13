@@ -90,31 +90,25 @@ async function notifySubscribers(
   textPreview: string | null
 ): Promise<void> {
   try {
-    const { rows: subs } = await pool.query<{ user_max_id: string; last_notified_at: string | null }>(
-      `SELECT ps.user_max_id, ps.last_notified_at
+    const { rows: subs } = await pool.query<{ user_max_id: string; count: string }>(
+      `SELECT ps.user_max_id, COUNT(c.id)::int AS count
          FROM post_subscriptions ps
+         JOIN comments c
+           ON c.post_id = ps.post_id
+          AND c.is_hidden = false
+          AND (ps.last_notified_at IS NULL OR c.created_at > ps.last_notified_at)
         WHERE ps.post_id = $1
-          AND ps.user_max_id != $2`,
+          AND ps.user_max_id != $2
+        GROUP BY ps.user_max_id
+       HAVING COUNT(c.id) > 0`,
       [postId, ownerMaxUserId]
     );
 
     if (subs.length === 0) return;
 
-    // Проверяем: есть ли новые комментарии с момента последнего уведомления
     for (const sub of subs) {
       const userMaxId = sub.user_max_id; // MAX user ID — оставляем строкой, не конвертируем в Number
-      const since = sub.last_notified_at;
-
-      const { rows: newComments } = await pool.query<{ count: string }>(
-        `SELECT COUNT(*) AS count FROM comments
-          WHERE post_id = $1
-            AND is_hidden = false
-            AND ($2::timestamptz IS NULL OR created_at > $2)`,
-        [postId, since]
-      );
-
-      const count = Number(newComments[0]?.count ?? 0);
-      if (count === 0) continue;
+      const count = Number(sub.count ?? 0);
 
       const postSnippet = textPreview
         ? `«${textPreview.slice(0, 80)}${textPreview.length > 80 ? '…' : ''}»`

@@ -10,6 +10,54 @@ import { logger } from '../utils/logger.js';
 import { pool } from '../db/db.js';
 import type { WebhookUpdate } from '../../../shared/types.js';
 
+function isActivePro(user: { plan?: string | null; plan_expires?: string | null }): boolean {
+  if (user.plan !== 'pro') return false;
+  if (!user.plan_expires) return true;
+  return new Date(user.plan_expires) > new Date();
+}
+
+async function getOwnerChannelCount(ownerId: number, excludeChatId?: string): Promise<number> {
+  const params: unknown[] = [ownerId];
+  let excludeClause = '';
+  if (excludeChatId) {
+    params.push(excludeChatId);
+    excludeClause = ` AND max_chat_id <> $${params.length}`;
+  }
+
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM channels WHERE owner_id = $1${excludeClause}`,
+    params
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
+async function notifyChannelLimitReached(
+  userId: number,
+  channelTitle: string,
+  chatId: string
+): Promise<void> {
+  const text =
+    `Канал «${channelTitle}» пока не подключён.\n\n` +
+    `На бесплатном тарифе можно подключить 1 канал. ` +
+    `Для подключения 2 и более каналов нужен активный тариф PRO.`;
+  const button = {
+    type: 'inline_keyboard',
+    payload: {
+      buttons: [[{
+        type: 'open_app',
+        text: '⬆️ Оформить PRO',
+        web_app: config.maxBotUrl,
+        payload: 'pricing',
+      }]],
+    },
+  };
+  await sendMessageToUser(userId, text, [button]);
+  logger.info('Канал не подключён: лимит FREE 1 канал, нужен PRO для 2 и более каналов', {
+    chatId,
+    userId,
+  });
+}
+
 export async function onBotAdded(update: WebhookUpdate): Promise<void> {
   // bot_added: chat_id и user на верхнем уровне (не внутри message)
   const rawChatId = update.chat_id ?? update.message?.recipient?.chat_id;
@@ -86,6 +134,23 @@ export async function onBotAdded(update: WebhookUpdate): Promise<void> {
 
     // Проверяем: канал уже зарегистрирован (бот был удалён и добавлен снова)?
     const existingChannel = await db.getChannelByMaxChatId(chatId);
+    const hasActivePro = isActivePro(owner);
+    const otherOwnerChannels = await getOwnerChannelCount(owner.id, chatId);
+
+    if (!hasActivePro && otherOwnerChannels >= 1) {
+      if (existingChannel) {
+        await pool.query(
+          'UPDATE channels SET is_active = false, channel_name = $1 WHERE max_chat_id = $2',
+          [chatInfo.title ?? null, chatId]
+        );
+      }
+      await notifyChannelLimitReached(
+        ownerCandidate.user_id,
+        chatInfo.title ?? chatId,
+        chatId
+      );
+      return;
+    }
 
     if (existingChannel) {
       await pool.query(

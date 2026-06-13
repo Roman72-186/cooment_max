@@ -4,19 +4,34 @@ import { useAppStore } from '../store/useAppStore';
 import { createPayment, getPaymentConfig, validatePromoCode, type PromoValidation } from '../api/backend';
 
 const FREE_FEATURES = [
-  'Комментарии на каналах',
-  'Реакции ❤️ на комментарии',
+  '1 канал',
+  'Текстовые комментарии под постами',
+  'Реакции на комментарии',
   'Удаление своих комментариев',
-  'До 3 каналов',
+  'Базовая сводка по постам и комментариям',
 ];
 
 const PRO_FEATURES = [
   'Всё из FREE',
-  'Неограниченное число каналов',
-  'Аналитика (просмотры, вовлечённость)',
+  '2 и более каналов',
+  'Фото и стикеры в комментариях',
+  'Опросы и реакции под постами',
+  'Уведомления владельцу о новых комментариях',
+  'Аналитика просмотров и вовлечённости',
   'Топ постов по комментариям',
-  'Стоп-слова (автомодерация)',
+  'Стоп-слова и авто-модерация',
+  'Реферальная программа и вывод на карту',
   'Приоритетная поддержка',
+];
+
+const PLAN_DIFFERENCES = [
+  { label: 'Каналы', free: '1 канал', pro: '2 и более каналов' },
+  { label: 'Комментарии', free: 'Только текст', pro: 'Текст, фото и стикеры' },
+  { label: 'Вовлечение', free: 'Реакции на комментарии', pro: 'Опросы и реакции под постами' },
+  { label: 'Модерация', free: 'Ручная', pro: 'Стоп-слова и авто-модерация' },
+  { label: 'Аналитика', free: 'Базовая сводка', pro: 'Просмотры, вовлечённость и топ постов' },
+  { label: 'Уведомления', free: 'Без уведомлений владельцу', pro: 'Уведомления о новых комментариях' },
+  { label: 'Рефералка', free: 'Недоступна', pro: 'Доступна на активном PRO, вывод на карту' },
 ];
 
 export function PricingPage() {
@@ -101,6 +116,30 @@ export function PricingPage() {
           </div>
         )}
 
+        <div className="pricing-diff">
+          <div className="pricing-diff__header">
+            <div className="pricing-diff__eyebrow">Сравнение тарифов</div>
+            <div className="pricing-diff__title">Чем PRO отличается от FREE</div>
+          </div>
+          <div className="pricing-diff__list">
+            {PLAN_DIFFERENCES.map((item) => (
+              <div className="pricing-diff__row" key={item.label}>
+                <div className="pricing-diff__label">{item.label}</div>
+                <div className="pricing-diff__plans">
+                  <div className="pricing-diff__plan">
+                    <span>FREE</span>
+                    <strong>{item.free}</strong>
+                  </div>
+                  <div className="pricing-diff__plan pricing-diff__plan--pro">
+                    <span>PRO</span>
+                    <strong>{item.pro}</strong>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
         <div className="pricing-grid">
           {/* FREE план */}
           <div className="pricing-card">
@@ -150,7 +189,7 @@ export function PricingPage() {
                 {/* Поле промо-кода */}
                 <div className="promo-input-row">
                   <input
-                    className="admin-settings__input"
+                    className="admin-settings__input promo-input--code"
                     placeholder="Промо-код"
                     value={promoCode}
                     onChange={e => {
@@ -158,20 +197,18 @@ export function PricingPage() {
                       setPromoResult(null);
                     }}
                     onKeyDown={e => e.key === 'Enter' && handleApplyPromo()}
-                    style={{ flex: 1, fontSize: 14, padding: '8px 12px' }}
                   />
                   <button
                     className="btn btn--ghost btn--sm"
                     onClick={handleApplyPromo}
                     disabled={promoChecking || !promoCode.trim()}
-                    style={{ flexShrink: 0 }}
                   >
                     {promoChecking ? '...' : 'Применить'}
                   </button>
                 </div>
                 {promoResult && (
                   promoResult.valid
-                    ? <div className="promo-price-final" style={{ fontSize: 13 }}>
+                    ? <div className="promo-price-final promo-price-final--note">
                         Скидка {promoResult.discount_percent}% применена
                       </div>
                     : <div className="promo-error">{promoResult.error}</div>
@@ -184,7 +221,7 @@ export function PricingPage() {
                   {paying ? 'Открываю...' : `Оформить PRO — ${finalPrice} ₽`}
                 </button>
                 {payError && (
-                  <div className="alert alert--error" style={{ marginTop: 8 }}>
+                  <div className="alert alert--error pricing-error">
                     {payError}
                   </div>
                 )}
@@ -193,25 +230,6 @@ export function PricingPage() {
           </div>
         </div>
 
-        {/* Реферальная программа */}
-        <div className="ref-card">
-          <div className="ref-card__title">🎁 Приведи друга — получи PRO</div>
-          <div className="ref-card__desc">
-            За каждого владельца канала, который оформит PRO по вашей ссылке,
-            вы получаете <strong>+30 дней PRO бесплатно</strong>.
-          </div>
-          {user?.ref_code && (
-            <button
-              className="btn btn--ghost btn--sm"
-              onClick={() => {
-                const link = `https://max.ru/id861708697380_2_bot?start=ref_${user.ref_code}`;
-                navigator.clipboard.writeText(link);
-              }}
-            >
-              Скопировать реферальную ссылку
-            </button>
-          )}
-        </div>
       </main>
     </div>
   );

@@ -22,11 +22,12 @@ export async function upsertUser(data: {
   username?: string;
 }): Promise<User> {
   const result = await pool.query<User>(
-    `INSERT INTO users (max_user_id, name, username)
-     VALUES ($1, $2, $3)
+    `INSERT INTO users (max_user_id, name, username, ref_code)
+     VALUES ($1, $2, $3, substr(md5(random()::text), 1, 8))
      ON CONFLICT (max_user_id)
      DO UPDATE SET name = EXCLUDED.name,
-                   username = COALESCE(EXCLUDED.username, users.username)
+                   username = COALESCE(EXCLUDED.username, users.username),
+                   ref_code = COALESCE(users.ref_code, substr(md5(users.id::text || ':' || users.max_user_id::text), 1, 8))
      RETURNING *`,
     [data.max_user_id, data.name ?? null, data.username ?? null]
   );
@@ -72,7 +73,10 @@ export async function upsertChannel(data: {
 
 export async function getChannelByMaxChatId(maxChatId: string): Promise<Channel | null> {
   const result = await pool.query<Channel>(
-    'SELECT * FROM channels WHERE max_chat_id = $1',
+    `SELECT ch.*, owner.plan AS owner_plan, owner.plan_expires AS owner_plan_expires
+       FROM channels ch
+       LEFT JOIN users owner ON owner.id = ch.owner_id
+      WHERE ch.max_chat_id = $1`,
     [maxChatId]
   );
   return result.rows[0] ?? null;
@@ -330,6 +334,8 @@ export async function getPostsWithNewComments(): Promise<PostWithNewComments[]> 
      JOIN users au    ON au.id = c.author_id
      WHERE ch.is_active = true
        AND ch.notifications_enabled = true
+       AND u.plan = 'pro'
+       AND (u.plan_expires IS NULL OR u.plan_expires > NOW())
        AND c.is_hidden = false
        AND c.created_at > COALESCE(p.last_notified_at, '1970-01-01'::timestamptz)
      GROUP BY p.id, p.text_preview, u.max_user_id`

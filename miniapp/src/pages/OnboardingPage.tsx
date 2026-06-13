@@ -4,24 +4,32 @@ import { getUserMe, syncChannels } from '../api/backend';
 import { useAppStore } from '../store/useAppStore';
 
 type Step = 'welcome' | 'instruction' | 'checking' | 'success';
+const BOT_ID = 'id861708697380_2_bot';
 
 export function OnboardingPage() {
-  const { setPage, setUser } = useAppStore();
+  const { setPage, setUser, addToast } = useAppStore();
   const [step, setStep] = useState<Step>('welcome');
   const [checking, setChecking] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [requiresPro, setRequiresPro] = useState(false);
 
   // Проверяем — появился ли канал в БД (бот был добавлен как admin)
   const handleCheck = useCallback(async () => {
     setChecking(true);
     setNotFound(false);
+    setRequiresPro(false);
     try {
       // Синхронизируем каналы с MAX API, потом проверяем
-      await syncChannels();
+      const syncResult = await syncChannels();
       const user = await getUserMe();
       setUser(user);
       if (user.channels.length > 0) {
+        if (syncResult.requires_pro) {
+          addToast({ type: 'warning', message: 'Первый канал подключён. Для 2 и более каналов нужен PRO' });
+        }
         setStep('success');
+      } else if (syncResult.requires_pro) {
+        setRequiresPro(true);
       } else {
         setNotFound(true);
       }
@@ -30,11 +38,20 @@ export function OnboardingPage() {
     } finally {
       setChecking(false);
     }
-  }, [setUser]);
+  }, [addToast, setUser]);
 
   const goToDashboard = useCallback(() => {
     setPage({ id: 'dashboard' });
   }, [setPage]);
+
+  const copyBotId = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(BOT_ID);
+      addToast({ type: 'success', message: 'ID бота скопирован' });
+    } catch {
+      addToast({ type: 'error', message: 'Не удалось скопировать ID' });
+    }
+  }, [addToast]);
 
   return (
     <div className="page page--center">
@@ -74,24 +91,31 @@ export function OnboardingPage() {
             <div className="onboarding__icon">📋</div>
             <h2 className="onboarding__title">Как подключить</h2>
             <ol className="onboarding__steps">
-              <li>Откройте бота и нажмите <strong>«Начать»</strong>:
+              <li>Скопируйте ID бота:
                 <div className="onboarding__bot-link">
+                  <span className="onboarding__bot-url">{BOT_ID}</span>
                   <button
                     className="btn btn--ghost btn--xs"
-                    onClick={() => (window as any).WebApp?.openLink('https://max.ru/id861708697380_2_bot')}
+                    onClick={copyBotId}
                   >
-                    Открыть бота
+                    Скопировать
                   </button>
                 </div>
               </li>
-              <li>Откройте настройки вашего канала → <strong>Администраторы</strong></li>
-              <li>Добавьте бот как администратора</li>
+              <li>Откройте ваш канал → <strong>Подписчики</strong> → добавьте бота по ID</li>
+              <li>После этого откройте настройки канала → <strong>Администраторы</strong></li>
+              <li>Добавьте этого бота как администратора</li>
               <li>Выдайте права: <em>читать, публиковать, редактировать</em></li>
               <li>Нажмите «Проверить» ниже</li>
             </ol>
             {notFound && (
               <div className="alert alert--error">
                 Канал пока не найден. Убедитесь, что добавили бота как администратора.
+              </div>
+            )}
+            {requiresPro && (
+              <div className="alert alert--error">
+                На бесплатном тарифе можно подключить 1 канал. Для подключения 2 и более каналов нужен активный тариф PRO.
               </div>
             )}
             <div className="onboarding__actions">
@@ -105,6 +129,11 @@ export function OnboardingPage() {
               <button className="btn btn--ghost" onClick={() => setStep('welcome')}>
                 Назад
               </button>
+              {requiresPro && (
+                <button className="btn btn--ghost" onClick={() => setPage({ id: 'pricing' })}>
+                  Оформить PRO
+                </button>
+              )}
             </div>
           </>
         )}

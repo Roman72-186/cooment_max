@@ -4,6 +4,8 @@ import { getFeed } from '../api/backend';
 import type { FeedItem } from '../api/backend';
 import { useAppStore } from '../store/useAppStore';
 
+const PAGE_SIZE = 20;
+
 function timeAgo(iso: string): string {
   const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
   if (diff < 60)    return 'сейчас';
@@ -17,11 +19,20 @@ interface InboxPageProps {
   channelName?: string;
 }
 
+function getFeedPreview(item: FeedItem): string {
+  if (item.text) return item.text;
+  const firstAttachment = item.attachments_json?.[0];
+  if (firstAttachment?.type === 'image') return 'Фото';
+  if (firstAttachment?.type === 'sticker') return `Стикер ${firstAttachment.emoji}`;
+  return 'Комментарий без текста';
+}
+
 export function InboxPage({ channelId, channelName }: InboxPageProps) {
   const { setPage } = useAppStore();
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -29,6 +40,7 @@ export function InboxPage({ channelId, channelName }: InboxPageProps) {
     try {
       const data = await getFeed(channelId);
       setItems(data);
+      setVisibleCount(PAGE_SIZE); // сбрасываем пагинацию при свежей загрузке
     } catch {
       setError('Не удалось загрузить комментарии');
     } finally {
@@ -64,7 +76,7 @@ export function InboxPage({ channelId, channelName }: InboxPageProps) {
           </div>
         )}
 
-        {error && <div className="alert alert--error">{error}</div>}
+        {error && <div className="alert alert--error" role="alert">{error}</div>}
 
         {!loading && items.length === 0 && !error && (
           <div className="empty-state">
@@ -74,31 +86,43 @@ export function InboxPage({ channelId, channelName }: InboxPageProps) {
         )}
 
         {items.length > 0 && (
-          <div className="inbox-list">
-            {items.map((item) => (
-              <div
-                key={item.id}
-                className="inbox-card"
-                onClick={() => setPage({ id: 'comments', postId: item.post_id })}
-              >
-                <div className="inbox-card__header">
-                  <div className="inbox-card__source">
-                    <span className="inbox-channel-name">
-                      {item.channel_name ?? item.max_chat_id}
-                    </span>
-                    {item.post_preview && (
-                      <span className="inbox-post-preview">
-                        {item.post_preview.slice(0, 50)}{item.post_preview.length > 50 ? '…' : ''}
+          <>
+            <div className="inbox-list">
+              {items.slice(0, visibleCount).map((item) => (
+                <div
+                  key={item.id}
+                  className="inbox-card"
+                  onClick={() => setPage({ id: 'comments', postId: item.post_id })}
+                >
+                  <div className="inbox-card__header">
+                    <div className="inbox-card__source">
+                      <span className="inbox-channel-name">
+                        {item.channel_name ?? item.max_chat_id}
                       </span>
-                    )}
+                      {item.post_preview && (
+                        <span className="inbox-post-preview">
+                          {item.post_preview.slice(0, 50)}{item.post_preview.length > 50 ? '…' : ''}
+                        </span>
+                      )}
+                    </div>
+                    <span className="inbox-card__time">{timeAgo(item.created_at)}</span>
                   </div>
-                  <span className="inbox-card__time">{timeAgo(item.created_at)}</span>
+                  <div className="inbox-card__author">{item.author_name}</div>
+                  <p className="inbox-card__text">{getFeedPreview(item)}</p>
                 </div>
-                <div className="inbox-card__author">{item.author_name}</div>
-                <p className="inbox-card__text">{item.text}</p>
+              ))}
+            </div>
+            {visibleCount < items.length && (
+              <div className="inbox-load-more">
+                <button
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+                >
+                  Показать ещё ({items.length - visibleCount})
+                </button>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </main>
     </div>

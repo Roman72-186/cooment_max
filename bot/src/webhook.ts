@@ -36,6 +36,15 @@ function isDuplicate(updateId: number): boolean {
 
 // Обработчик входящих webhook-событий от MAX
 app.post('/webhook', async (req, res) => {
+  if (config.webhookSecret) {
+    const incomingSecret = req.get('X-Max-Bot-Api-Secret');
+    if (incomingSecret !== config.webhookSecret) {
+      logger.warn('Webhook отклонён: неверный X-Max-Bot-Api-Secret');
+      res.sendStatus(401);
+      return;
+    }
+  }
+
   // Отвечаем 200 сразу — MAX не ждёт результата обработки
   res.sendStatus(200);
 

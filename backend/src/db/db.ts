@@ -18,7 +18,7 @@ pool.on('error', (err) => {
 
 // Единая точка upsert пользователя для всех backend-роутов.
 // Логика:
-//   - ref_code генерируется только при создании (ON CONFLICT не трогает его)
+//   - ref_code генерируется при создании и восстанавливается у старых пользователей без кода
 //   - username не затирается null — COALESCE сохраняет существующий
 //   - Возвращает полный набор полей для GET /api/user/me
 export async function upsertUser(data: {
@@ -43,7 +43,8 @@ export async function upsertUser(data: {
      VALUES ($1, $2, $3, substr(md5(random()::text), 1, 8))
      ON CONFLICT (max_user_id) DO UPDATE
        SET name     = EXCLUDED.name,
-           username = COALESCE(EXCLUDED.username, users.username)
+           username = COALESCE(EXCLUDED.username, users.username),
+           ref_code = COALESCE(users.ref_code, substr(md5(users.id::text || ':' || users.max_user_id::text), 1, 8))
      RETURNING
        id, max_user_id, name, username,
        plan, plan_expires, is_admin, ref_code, referred_by,

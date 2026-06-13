@@ -2,7 +2,7 @@
 // Открывается когда start_param = "post_<ID>"
 import { useEffect, useCallback, useRef, useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
-import { getComments, recordView, getUserMe, updateReplyNotifications, refreshPostCounter } from '../api/backend';
+import { getComments, recordView, getUserMe, updateReplyNotifications, refreshPostCounter, getPost } from '../api/backend';
 import type { Comment } from '../api/backend';
 import { CommentThread } from '../components/CommentThread';
 import { CommentInput } from '../components/CommentInput';
@@ -20,9 +20,12 @@ interface Props {
 export function CommentsPage({ postId, highlightCommentId }: Props) {
   const { comments, loading, error, setComments, addComment, removeComment, setLoading, setError, user, setUser } = useAppStore();
   const contentRef      = useRef<HTMLDivElement>(null);
-  const prevCountRef    = useRef(0);   // отслеживаем рост числа комментариев
-  const shouldScroll    = useRef(false); // флаг: нужен скролл после следующего рендера
-  const didHighlightRef = useRef(false); // защита от повторного скролла при поллинге
+  const prevCountRef    = useRef(0);      // отслеживаем рост числа комментариев
+  const shouldScroll    = useRef(false);  // флаг: нужен скролл после следующего рендера
+  const didHighlightRef = useRef(false);  // защита от повторного скролла при поллинге
+  const isNearBottomRef = useRef(true);   // пользователь около нижнего края
+  const [newCount, setNewCount] = useState(0); // счётчик новых комментариев (ARIA + бейдж)
+  const [mediaCommentsEnabled, setMediaCommentsEnabled] = useState(false);
 
   // Загружаем пользователя если открыты напрямую (fast-path, без App.tsx загрузки)
   useEffect(() => {
@@ -84,6 +87,19 @@ export function CommentsPage({ postId, highlightCommentId }: Props) {
     });
   }, []);
 
+  // Следим за позицией скролла: обновляем isNearBottomRef, прячем бейдж при достижении низа
+  useEffect(() => {
+    const el = contentRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+      isNearBottomRef.current = nearBottom;
+      if (nearBottom) setNewCount(0);
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, []); // contentRef стабилен — пустой депс OK
+
   // Инициируем обновление кнопки и сразу закрываем — не ждём ответа сервера
   const handleClose = useCallback(() => {
     refreshPostCounter(postId); // fire-and-forget, ошибки поглощены внутри
@@ -118,20 +134,58 @@ export function CommentsPage({ postId, highlightCommentId }: Props) {
     }
   }, [postId, setComments, setLoading, setError]);
 
+  const loadNewComments = useCallback(async () => {
+    const current = useAppStore.getState().comments;
+    const lastId = current.reduce((max, comment) => Math.max(max, comment.id), 0);
+
+    if (lastId === 0) {
+      await loadComments();
+      return;
+    }
+
+    try {
+      const data = await getComments(postId, { afterId: lastId });
+      if (data.length === 0) return;
+
+      const existingIds = new Set(current.map((comment) => comment.id));
+      const merged = [
+        ...current,
+        ...data.filter((comment) => !existingIds.has(comment.id)),
+      ].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+      setComments(merged);
+    } catch (err) {
+      console.warn('Failed to load new comments:', err);
+    }
+  }, [postId, loadComments, setComments]);
+
   // При отправке комментария — добавляем локально и скроллим вниз (без перезагрузки)
   const handleSent = useCallback((comment: Comment) => {
     shouldScroll.current = true;
     addComment(comment);
   }, [addComment]);
 
-  // Скроллим вниз когда число комментариев выросло (после отправки или первой загрузки)
+  // Скроллим вниз или показываем бейдж при появлении новых комментариев
   useEffect(() => {
-    // Если есть highlight-цель — не скроллим вниз при первой загрузке
     const hasHighlight = highlightCommentId && !didHighlightRef.current;
-    if (!hasHighlight && (comments.length > prevCountRef.current || shouldScroll.current)) {
-      scrollToBottom();
+
+    if (shouldScroll.current) {
+      // Пользователь сам отправил комментарий → всегда скроллим вниз
+      if (!hasHighlight) scrollToBottom();
       shouldScroll.current = false;
+    } else if (comments.length > prevCountRef.current) {
+      if (prevCountRef.current === 0) {
+        // Первая загрузка страницы
+        if (!hasHighlight) scrollToBottom();
+      } else if (isNearBottomRef.current && !hasHighlight) {
+        // Пользователь уже внизу → тихо подскроллить
+        scrollToBottom();
+      } else {
+        // Читает старые комментарии → не трогать скролл, показать бейдж
+        setNewCount((prev) => prev + (comments.length - prevCountRef.current));
+      }
     }
+
     prevCountRef.current = comments.length;
   }, [comments.length, scrollToBottom, highlightCommentId]);
 
@@ -151,15 +205,23 @@ export function CommentsPage({ postId, highlightCommentId }: Props) {
   useEffect(() => {
     expand();
     recordView(postId); // фиксируем просмотр один раз при открытии
+    getPost(postId).then(post => {
+      setMediaCommentsEnabled(Boolean(post?.media_comments_enabled));
+    }).catch(() => setMediaCommentsEnabled(false));
     loadComments();
 
-    // Обновляем каждые 15 секунд — оптимизация нагрузки на сервер
-    const timer = setInterval(loadComments, 15_000);
+    // Обновляем каждые 15 секунд только новые комментарии.
+    const timer = setInterval(loadNewComments, 15_000);
     return () => clearInterval(timer);
-  }, [loadComments]);
+  }, [postId, loadComments, loadNewComments]);
 
   return (
     <div className="page">
+      {/* ARIA live region для новых комментариев */}
+      <div className="sr-only" aria-live="polite" aria-atomic="true">
+        {newCount > 0 ? `${newCount} новых комментариев` : ''}
+      </div>
+
       <header className="page-header">
         <h1 className="page-title">Комментарии</h1>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -202,7 +264,7 @@ export function CommentsPage({ postId, highlightCommentId }: Props) {
             ))}
           </div>
         ) : error ? (
-          <div className="error-state">
+          <div className="error-state" role="alert">
             <span>{error}</span>
             <button onClick={loadComments}>Повторить</button>
           </div>
@@ -211,8 +273,22 @@ export function CommentsPage({ postId, highlightCommentId }: Props) {
         )}
       </main>
 
+      {newCount > 0 && (
+        <button
+          className="new-comments-badge"
+          onClick={() => { scrollToBottom(); setNewCount(0); }}
+          aria-label={`Прокрутить к ${newCount} новым комментариям`}
+        >
+          ↓ {newCount} {newCount === 1 ? 'новый' : 'новых'}
+        </button>
+      )}
+
       <footer className="page-footer">
-        <CommentInput postId={postId} onSent={handleSent} />
+        <CommentInput
+          postId={postId}
+          onSent={handleSent}
+          mediaEnabled={mediaCommentsEnabled}
+        />
       </footer>
     </div>
   );

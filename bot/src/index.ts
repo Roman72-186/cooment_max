@@ -49,7 +49,7 @@ async function main(): Promise<void> {
           'bot_removed',
           'message_callback',
           'bot_started',
-        ]);
+        ], config.webhookSecret || undefined);
       } catch (err) {
         logger.warn('Не удалось зарегистрировать webhook — бот продолжит работу без него', {
           error: err instanceof Error ? err.message : String(err),

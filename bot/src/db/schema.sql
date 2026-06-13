@@ -57,6 +57,7 @@ CREATE TABLE comments (
   author_id    BIGINT REFERENCES users(id),
   parent_id    BIGINT REFERENCES comments(id),  -- NULL = корневой комментарий
   text         TEXT NOT NULL CHECK (length(text) <= 2000),
+  attachments_json JSONB NOT NULL DEFAULT '[]',
   is_hidden    BOOLEAN DEFAULT false,            -- мягкое удаление / модерация
   created_at   TIMESTAMPTZ DEFAULT NOW()
 );
@@ -72,6 +73,35 @@ CREATE TABLE payments (
   plan          VARCHAR(20),
   status        VARCHAR(20),          -- pending | succeeded | cancelled
   created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─────────────────────────────────────────────────
+-- РЕФЕРАЛЬНЫЕ НАЧИСЛЕНИЯ
+-- ─────────────────────────────────────────────────
+CREATE TABLE referral_rewards (
+  id                    BIGSERIAL PRIMARY KEY,
+  referrer_id           BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  referred_user_id      BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  payment_id            BIGINT REFERENCES payments(id) ON DELETE SET NULL,
+  reward_type           TEXT NOT NULL CHECK (reward_type IN ('first_pro_days', 'commission')),
+  reward_days           INT NOT NULL DEFAULT 0 CHECK (reward_days >= 0),
+  commission_percent    INT NOT NULL DEFAULT 0 CHECK (commission_percent >= 0 AND commission_percent <= 100),
+  commission_amount_rub NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (commission_amount_rub >= 0),
+  paid_referrals_count  INT NOT NULL DEFAULT 0 CHECK (paid_referrals_count >= 0),
+  status                TEXT NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'paid', 'cancelled')),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ─────────────────────────────────────────────────
+-- РУЧНЫЕ КОРРЕКТИРОВКИ РЕФЕРАЛЬНОГО БАЛАНСА
+-- ─────────────────────────────────────────────────
+CREATE TABLE referral_balance_adjustments (
+  id             BIGSERIAL PRIMARY KEY,
+  referrer_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  admin_user_id  BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  amount_rub     NUMERIC(10,2) NOT NULL CHECK (amount_rub <> 0),
+  reason         TEXT NOT NULL DEFAULT '',
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ─────────────────────────────────────────────────
@@ -94,3 +124,10 @@ CREATE INDEX idx_comments_post    ON comments(post_id);
 CREATE INDEX idx_posts_channel    ON posts(channel_id);
 CREATE INDEX idx_analytics_ch_dt  ON analytics_daily(channel_id, date);
 CREATE INDEX idx_channels_owner   ON channels(owner_id);
+CREATE UNIQUE INDEX idx_referral_rewards_first_once ON referral_rewards(referrer_id, referred_user_id) WHERE reward_type = 'first_pro_days';
+CREATE UNIQUE INDEX idx_referral_rewards_payment_type ON referral_rewards(payment_id, reward_type) WHERE payment_id IS NOT NULL;
+CREATE INDEX idx_referral_rewards_referrer ON referral_rewards(referrer_id, created_at DESC);
+CREATE INDEX idx_referral_rewards_referred ON referral_rewards(referred_user_id, created_at DESC);
+CREATE INDEX idx_referral_adjustments_referrer ON referral_balance_adjustments(referrer_id, created_at DESC);
+CREATE INDEX idx_referral_adjustments_created ON referral_balance_adjustments(created_at DESC);
+CREATE INDEX idx_users_referred_by ON users(referred_by);

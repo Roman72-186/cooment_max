@@ -22,7 +22,8 @@ userRouter.get('/me', requireAuth, async (req, res) => {
     const { rows: channelRows } = await pool.query(
       `SELECT
          id, max_chat_id, channel_name, is_active,
-         post_count, comments_enabled, notifications_enabled, banned_words, post_reactions, connected_at,
+         post_count, comments_enabled, notifications_enabled, banned_words, post_reactions,
+         poll_enabled, poll_question, poll_options, connected_at,
          COALESCE((
            SELECT COUNT(*) FROM comments cm
            JOIN posts p ON p.id = cm.post_id

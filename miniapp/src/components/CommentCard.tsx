@@ -5,25 +5,25 @@ import { useState, useRef, useEffect } from 'react';
 
 // Быстрые эмодзи для выбора реакции
 const QUICK_EMOJIS = ['❤️', '👍', '👎', '😂', '🔥', '😮', '😢', '🎉'];
-import type { Comment, EmojiReaction } from '../api/backend';
+import type { Comment, CommentAttachment, EmojiReaction } from '../api/backend';
 import { deleteComment, toggleReaction, banUser } from '../api/backend';
 import { useAppStore } from '../store/useAppStore';
 import { getBridgeUser } from '../bridge/maxBridge';
 
 
-// ── Цветовая палитра авторов — только синие и зелёные градации ───
+// ── Цветовая палитра авторов — тёплые и холодные цвета для разнообразия ───
 // Каждый author_max_id детерминированно получает свой цвет.
 const AUTHOR_PALETTE = [
-  { avatar: '#0288d1', bubble: 'rgba(2,136,209,0.32)',   name: '#38bdf8' },  // синий
-  { avatar: '#00897b', bubble: 'rgba(0,137,123,0.30)',   name: '#34d399' },  // бирюзовый
-  { avatar: '#1565c0', bubble: 'rgba(21,101,192,0.32)',  name: '#60a5fa' },  // тёмно-синий
-  { avatar: '#43a047', bubble: 'rgba(67,160,71,0.30)',   name: '#4ade80' },  // зелёный
-  { avatar: '#0097a7', bubble: 'rgba(0,151,167,0.30)',   name: '#22d3ee' },  // циан
-  { avatar: '#2e7d32', bubble: 'rgba(46,125,50,0.30)',   name: '#86efac' },  // тёмно-зелёный
-  { avatar: '#01579b', bubble: 'rgba(1,87,155,0.32)',    name: '#7dd3fc' },  // морской
-  { avatar: '#00695c', bubble: 'rgba(0,105,92,0.30)',    name: '#5eead4' },  // тёмная бирюза
-  { avatar: '#1976d2', bubble: 'rgba(25,118,210,0.32)',  name: '#93c5fd' },  // яркий синий
-  { avatar: '#388e3c', bubble: 'rgba(56,142,60,0.30)',   name: '#6ee7b7' },  // средний зелёный
+  { avatar: '#0288d1', bubble: 'rgba(2,136,209,0.30)',   name: '#38bdf8' },  // синий
+  { avatar: '#d97706', bubble: 'rgba(217,119,6,0.28)',   name: '#fbbf24' },  // янтарный
+  { avatar: '#00897b', bubble: 'rgba(0,137,123,0.28)',   name: '#34d399' },  // бирюзовый
+  { avatar: '#be185d', bubble: 'rgba(190,24,93,0.28)',   name: '#f472b6' },  // роза
+  { avatar: '#1565c0', bubble: 'rgba(21,101,192,0.30)',  name: '#60a5fa' },  // тёмно-синий
+  { avatar: '#c2410c', bubble: 'rgba(194,65,12,0.28)',   name: '#fb923c' },  // коралл
+  { avatar: '#0097a7', bubble: 'rgba(0,151,167,0.28)',   name: '#22d3ee' },  // циан
+  { avatar: '#6d28d9', bubble: 'rgba(109,40,217,0.28)',  name: '#a78bfa' },  // фиолетовый
+  { avatar: '#1976d2', bubble: 'rgba(25,118,210,0.30)',  name: '#93c5fd' },  // яркий синий
+  { avatar: '#15803d', bubble: 'rgba(21,128,61,0.28)',   name: '#4ade80' },  // зелёный
 ];
 
 function getAuthorPalette(authorMaxId?: number) {
@@ -89,12 +89,51 @@ function renderTextWithLinks(text: string): React.ReactNode {
   return parts.length > 0 ? <>{parts}</> : text;
 }
 
+function getCommentPreview(comment: Comment): string {
+  if (comment.text) {
+    return `${comment.text.slice(0, 100)}${comment.text.length > 100 ? '…' : ''}`;
+  }
+  const firstAttachment = comment.attachments_json?.[0];
+  if (firstAttachment?.type === 'image') return 'Фото';
+  if (firstAttachment?.type === 'sticker') return `Стикер ${firstAttachment.emoji}`;
+  return 'Комментарий';
+}
+
+function renderAttachment(attachment: CommentAttachment, index: number): React.ReactNode {
+  if (attachment.type === 'image') {
+    return (
+      <figure key={`image-${index}`} className="comment-attachment-photo">
+        <img
+          src={attachment.url}
+          alt={attachment.filename ? `Фото ${attachment.filename}` : 'Фото в комментарии'}
+          className="comment-attachment-image"
+          loading="lazy"
+        />
+        {attachment.filename && (
+          <figcaption className="comment-attachment-caption">
+            {attachment.filename}
+          </figcaption>
+        )}
+      </figure>
+    );
+  }
+
+  return (
+    <div key={`sticker-${index}`} className="comment-attachment-sticker" aria-label={attachment.label ?? 'Стикер'}>
+      <span aria-hidden="true">{attachment.emoji}</span>
+    </div>
+  );
+}
+
 // Порог и максимальный сдвиг свайпа (px)
 const SWIPE_THRESHOLD = 56;
 const SWIPE_MAX      = 72;
 
 export function CommentCard({ comment, parentComment, onDeleted, onRestoreComment }: Props) {
   const setReplyTo = useAppStore((s) => s.setReplyTo);
+  const addToast = useAppStore((s) => s.addToast);
+  const addComment = useAppStore((s) => s.addComment);
+  const requestConfirm = useAppStore((s) => s.requestConfirm);
 
   const [emojiReactions, setEmojiReactions] = useState<EmojiReaction[]>(
     comment.emoji_reactions ?? []
@@ -122,7 +161,6 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
   const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 100, left: 42 });
   const [deleting, setDeleting] = useState(false);
   const [banning, setBanning] = useState(false);
-  const [linkCopied, setLinkCopied] = useState(false);
 
   const longPressTimer = useRef<number | null>(null);
 
@@ -354,7 +392,7 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
 
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(comment.text);
+      await navigator.clipboard.writeText(comment.text || getCommentPreview(comment));
     } catch {
       // Clipboard API недоступен — игнорируем
     }
@@ -367,15 +405,32 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
       await navigator.clipboard.writeText(link);
     } catch {}
     setContextOpen(false);
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 2000);
+    addToast({ type: 'info', message: 'Ссылка скопирована' });
   }
 
   async function handleDelete() {
     if (deleting) return;
     setDeleting(true);
     setContextOpen(false);
+
+    // Сохранить комментарий перед удалением для возможности отмены
+    const removed = comment;
     onDeleted?.(comment.id); // оптимистично убираем сразу
+
+    // Показать toast с возможностью отменить
+    addToast({
+      type: 'info',
+      message: 'Комментарий удалён',
+      duration: 4000,
+      action: {
+        label: 'Отменить',
+        onClick: () => {
+          // Восстанавливаем через addComment
+          addComment(removed);
+        },
+      },
+    });
+
     try {
       await deleteComment(comment.id);
     } catch {
@@ -384,17 +439,24 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
     }
   }
 
-  async function handleBan() {
-    if (banning || !comment.channel_id || !comment.author_max_id) return;
-    setBanning(true);
+  function handleBan() {
     setContextOpen(false);
-    onDeleted?.(comment.id); // оптимистично убираем сразу
-    try {
-      await banUser(comment.channel_id, comment.author_max_id);
-    } catch {
-      onRestoreComment?.(comment); // откат при ошибке сети
-      setBanning(false);
-    }
+    requestConfirm({
+      message: `Заблокировать пользователя?`,
+      confirmLabel: 'Заблокировать',
+      variant: 'danger',
+      onConfirm: async () => {
+        if (banning || !comment.channel_id || !comment.author_max_id) return;
+        setBanning(true);
+        onDeleted?.(comment.id); // оптимистично убираем сразу
+        try {
+          await banUser(comment.channel_id, comment.author_max_id);
+        } catch {
+          onRestoreComment?.(comment); // откат при ошибке сети
+          setBanning(false);
+        }
+      },
+    });
   }
 
   return (
@@ -420,7 +482,7 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
           {/* Аватар с цветом автора */}
           <div
             className="comment-avatar"
-            style={{ background: isOwner ? '#8b5cf6' : palette.avatar }}
+            style={{ background: isOwner ? 'var(--accent)' : palette.avatar }}
           >
             {getInitials(comment.author_name)}
           </div>
@@ -430,7 +492,7 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
             <div className="comment-header">
               <span
                 className="comment-author"
-                style={{ color: isOwner ? '#a78bfa' : palette.name }}
+                style={{ color: isOwner ? 'var(--accent-text)' : palette.name }}
               >
                 {comment.author_name}
               </span>
@@ -453,13 +515,18 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
               >
                 <span className="comment-quote__author">{parentComment.author_name}</span>
                 <span className="comment-quote__text">
-                  {parentComment.text.slice(0, 100)}
-                  {parentComment.text.length > 100 ? '…' : ''}
+                  {getCommentPreview(parentComment)}
                 </span>
               </button>
             )}
 
-            <p className="comment-text">{renderTextWithLinks(comment.text)}</p>
+            {comment.text && <p className="comment-text">{renderTextWithLinks(comment.text)}</p>}
+
+            {comment.attachments_json?.length > 0 && (
+              <div className="comment-attachments">
+                {comment.attachments_json.map(renderAttachment)}
+              </div>
+            )}
 
             {/* Реакции — пилюли по каждому эмодзи (один пользователь — одна) */}
             {emojiReactions.length > 0 && (
@@ -481,10 +548,6 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
           </div>
         </div>
 
-        {/* Тост: ссылка скопирована */}
-        {linkCopied && (
-          <div className="comment-link-copied">🔗 Ссылка скопирована</div>
-        )}
 
         {/* Контекстное меню (тап по комментарию) */}
         {contextOpen && (

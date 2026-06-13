@@ -148,7 +148,7 @@ describe('onPostCreated', () => {
     await onPostCreated(makeUpdate());
 
     expect(db.createPoll).toHaveBeenCalledWith(42, 'Лучший вариант?', ['А', 'Б', 'В']);
-    expect(maxClient.buildPollButtons).toHaveBeenCalledWith(42, ['А', 'Б', 'В'], [0, 0, 0]);
+    expect(maxClient.buildPollButtons).toHaveBeenCalledWith(42, ['А', 'Б', 'В'], [0, 0, 0], undefined, 'Лучший вариант?');
   });
 
   it('передаёт poll_question/options в createPost как снапшот', async () => {

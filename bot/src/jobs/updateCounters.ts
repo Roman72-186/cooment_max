@@ -68,9 +68,22 @@ async function applyPostUpdate(
   let pollRows: unknown[][] = [];
   const pollState = await db.getPollWithCounts(post.id);
   if (pollState) {
-    pollRows = maxClient.buildPollButtons(post.id, pollState.options, pollState.counts);
+    // Подсвечиваем вариант с наибольшим числом голосов — ✅ не исчезает после перерисовки
+    let pollVotedIdx: number | undefined;
+    if (pollState.counts.some(c => c > 0)) {
+      pollVotedIdx = pollState.counts.reduce(
+        (maxIdx, c, idx, arr) => c > arr[maxIdx] ? idx : maxIdx, 0
+      );
+    }
+    pollRows = maxClient.buildPollButtons(post.id, pollState.options, pollState.counts, pollVotedIdx, pollState.question);
   }
-  const keyboard = maxClient.buildPostKeyboard(post.id, count, orderedReactions, post.comments_enabled, undefined, pollRows);
+  // Подсвечиваем реакцию с наибольшим числом — ✅ не исчезает после перерисовки
+  let selectedEmoji: string | undefined;
+  if (orderedReactions.length > 0) {
+    const top = orderedReactions.reduce((a, b) => b.count > a.count ? b : a, orderedReactions[0]);
+    if (top.count > 0) selectedEmoji = top.emoji;
+  }
+  const keyboard = maxClient.buildPostKeyboard(post.id, count, orderedReactions, post.comments_enabled, selectedEmoji, pollRows);
   const mediaAttachments = (post.attachments_json ?? []) as unknown as Record<string, unknown>[];
   const keyboardAttachments = keyboard ? [keyboard] : [];
   await maxClient.editMessage(post.max_message_id!, {

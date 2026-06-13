@@ -93,12 +93,30 @@ export interface Post {
 }
 
 // ─── КОММЕНТАРИЙ ─────────────────────────────────────────────────
+export type CommentAttachment =
+  | {
+      type: 'image';
+      url: string;
+      width?: number;
+      height?: number;
+      mime_type?: string;
+      filename?: string;
+      size?: number;
+    }
+  | {
+      type: 'sticker';
+      sticker_id: string;
+      emoji: string;
+      label?: string;
+    };
+
 export interface Comment {
   id: number;
   post_id: number;
   author_id: number;
   parent_id: number | null; // null = корневой комментарий
   text: string;
+  attachments_json: CommentAttachment[];
   is_hidden: boolean;
   created_at: string;
   // Поля из JOIN-запросов (добавляются в API-ответах)

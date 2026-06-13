@@ -16,12 +16,15 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
 apt-get update -y
 apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-echo "=== Генерация SSL сертификата ==="
+echo "=== SSL сертификат ==="
+echo "MAX с 25.05.2026 не принимает self-signed сертификаты."
+echo "Перед запуском бота положи сертификат доверенного ЦС в:"
+echo "  /opt/max-comments/infra/ssl/cert.pem  (full chain)"
+echo "  /opt/max-comments/infra/ssl/key.pem"
+echo "Для Let's Encrypt можно использовать certbot, затем скопировать:"
+echo "  fullchain.pem -> cert.pem"
+echo "  privkey.pem   -> key.pem"
 mkdir -p /opt/max-comments/infra/ssl
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout /opt/max-comments/infra/ssl/key.pem \
-  -out /opt/max-comments/infra/ssl/cert.pem \
-  -subj '/CN=89.169.2.231'
 
 echo "=== Клонирование репозитория ==="
 cd /opt

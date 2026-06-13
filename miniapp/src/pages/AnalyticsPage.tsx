@@ -24,8 +24,12 @@ export function AnalyticsPage({ channelId }: Props) {
     try {
       const result = await getChannelAnalytics(channelId, period);
       setData(result);
-    } catch {
-      setError('Не удалось загрузить аналитику');
+    } catch (err: any) {
+      if (err?.response?.data?.requires_pro) {
+        setError('Аналитика доступна на PRO');
+      } else {
+        setError('Не удалось загрузить аналитику');
+      }
     } finally {
       setLoading(false);
     }

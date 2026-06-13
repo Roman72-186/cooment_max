@@ -10,6 +10,11 @@ import * as db from '../db/db.js';
 import { logger } from '../utils/logger.js';
 import type { WebhookUpdate, Channel } from '../../../shared/types.js';
 
+function isActivePro(user: { plan?: string | null; plan_expires?: string | Date | null }): boolean {
+  if (user.plan !== 'pro') return false;
+  if (!user.plan_expires) return true;
+  return new Date(user.plan_expires) > new Date();
+}
 
 export async function onPostCreated(update: WebhookUpdate): Promise<void> {
   const message = update.message;
@@ -41,22 +46,31 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
       return;
     }
 
-    // Проверяем: если и комментарии и реакции выключены — нечего добавлять
-    const reactions: string[] = channel.post_reactions ?? [];
-    if (!channel.comments_enabled && reactions.length === 0) {
-      logger.debug('Комментарии и реакции отключены, пропускаем', { chatId });
+    // Снапшот опроса из настроек канала на момент создания поста
+    const ownerPlanKnown =
+      (channel as any).owner_plan !== undefined ||
+      (channel as any).owner_plan_expires !== undefined;
+    const channelHasPro = ownerPlanKnown
+      ? isActivePro({
+          plan: (channel as any).owner_plan,
+          plan_expires: (channel as any).owner_plan_expires,
+        })
+      : true;
+    const channelPollEnabled = channelHasPro && ((channel as any).poll_enabled ?? false);
+    const channelPollQuestion: string | null = (channel as any).poll_question ?? null;
+    const channelPollOptions: Array<{ text: string }> | null = (channel as any).poll_options ?? null;
+    const hasPollTemplate = channelPollEnabled && channelPollQuestion && channelPollOptions && channelPollOptions.length >= 2;
+
+    // Проверяем: если и комментарии, и реакции, и опрос выключены — нечего добавлять
+    const reactions: string[] = channelHasPro ? (channel.post_reactions ?? []) : [];
+    if (!channel.comments_enabled && reactions.length === 0 && !hasPollTemplate) {
+      logger.debug('Комментарии, реакции и опрос отключены, пропускаем', { chatId });
       return;
     }
 
     // 2. Сохранить пост в БД (полный текст + медиа-вложения для корректного обновления кнопки)
     const originalAttachments = (message.body.attachments ?? []) as unknown as Record<string, unknown>[];
     const mediaAttachments = originalAttachments.filter(a => a?.type !== 'inline_keyboard');
-
-    // Снапшот опроса из настроек канала на момент создания поста
-    const channelPollEnabled = (channel as any).poll_enabled ?? false;
-    const channelPollQuestion: string | null = (channel as any).poll_question ?? null;
-    const channelPollOptions: Array<{ text: string }> | null = (channel as any).poll_options ?? null;
-    const hasPollTemplate = channelPollEnabled && channelPollQuestion && channelPollOptions && channelPollOptions.length >= 2;
 
     const post = await db.createPost({
       channel_id: channel.id,
@@ -86,7 +100,7 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
       const poll = await db.createPoll(post.id, channelPollQuestion!, options);
       if (poll) {
         const zeroCounts = options.map(() => 0);
-        pollButtons = maxClient.buildPollButtons(post.id, options, zeroCounts);
+        pollButtons = maxClient.buildPollButtons(post.id, options, zeroCounts, undefined, channelPollQuestion ?? undefined);
         logger.info('Опрос из настроек канала создан для поста', {
           postId: post.id,
           pollId: poll.id,
@@ -190,7 +204,7 @@ async function autoRegisterChannel(chatId: string | number): Promise<Channel | n
     );
 
     logger.info('Канал авторегистрирован', { chatId, title, ownerId, channelId: result.rows[0]?.id });
-    return result.rows[0] ?? null;
+    return await db.getChannelByMaxChatId(String(chatId));
   } catch (err) {
     logger.error('Ошибка авторегистрации канала', {
       chatId,

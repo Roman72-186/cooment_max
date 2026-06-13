@@ -112,10 +112,12 @@ function buildWelcomeText(name: string): string {
 
 🚀 **Как подключить канал:**
 
-1. Зайди в настройки своего канала в MAX
-2. Раздел **Администраторы** → добавь бота
-3. Дай права: читать, публиковать, редактировать
-4. Готово — следующий пост уже получит кнопку!
+1. Скопируй ID бота: \`id861708697380_2_bot\`
+2. Зайди в свой канал → **Подписчики** → добавь бота по ID
+3. После этого открой настройки канала → **Администраторы**
+4. Добавь этого бота как администратора
+5. Дай права: читать, публиковать, редактировать
+6. Готово — следующий пост уже получит кнопку!
 
 ─────
 
@@ -151,8 +153,17 @@ async function linkReferral(userId: number, refCode: string): Promise<void> {
   try {
     const { pool } = await import('../db/db.js');
     const referrer = await pool.query(
-      'SELECT id FROM users WHERE ref_code = $1',
-      [refCode]
+      `SELECT id
+         FROM users ref
+        WHERE ref.ref_code = $1
+          AND ref.id <> $2
+          AND ref.plan = 'pro'
+          AND (ref.plan_expires IS NULL OR ref.plan_expires > NOW())
+          AND EXISTS (
+            SELECT 1 FROM payments p
+             WHERE p.user_id = ref.id AND p.status = 'succeeded'
+          )`,
+      [refCode, userId]
     );
     if (referrer.rows.length === 0) return;
 

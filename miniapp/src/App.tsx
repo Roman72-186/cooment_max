@@ -6,11 +6,25 @@ import { useAppStore } from './store/useAppStore';
 import { CommentsPage } from './pages/CommentsPage';
 import { OnboardingPage } from './pages/OnboardingPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { ReferralPage } from './pages/ReferralPage';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PricingPage } from './pages/PricingPage';
 import { AdminPage } from './pages/AdminPage';
 import { InboxPage } from './pages/InboxPage';
+import { ToastContainer } from './components/Toast';
+import { ConfirmDialog } from './components/ConfirmDialog';
+
+const SUPPORT_URL = 'https://max.ru/join/Vp56M4Z2mlT-Z1TFeHl9rQyOQ1SAq9aet9g9C-92owY';
+
+function openSupportLink() {
+  const webApp = (window as any).WebApp;
+  if (webApp?.openLink) {
+    webApp.openLink(SUPPORT_URL);
+    return;
+  }
+  window.open(SUPPORT_URL, '_blank', 'noopener,noreferrer');
+}
 
 export function App() {
   const { page, setPage, setUser } = useAppStore();
@@ -39,6 +53,11 @@ export function App() {
 
         if (startParam === 'pricing') {
           setPage({ id: 'pricing' });
+          return;
+        }
+
+        if (startParam === 'referrals') {
+          setPage({ id: 'referrals' });
           return;
         }
 
@@ -126,6 +145,7 @@ export function App() {
     case 'inbox':       content = <InboxPage channelId={page.channelId} channelName={page.channelName} />; break;
     case 'onboarding':  content = <OnboardingPage />;                      break;
     case 'dashboard':   content = <DashboardPage />;                       break;
+    case 'referrals':   content = <ReferralPage />;                        break;
     case 'analytics':   content = <AnalyticsPage channelId={page.channelId} />; break;
     case 'settings':    content = <SettingsPage channelId={page.channelId} />;  break;
     case 'pricing':     content = <PricingPage />;                         break;
@@ -151,6 +171,18 @@ export function App() {
           </span>
         </footer>
       )}
+      <button
+        type="button"
+        className="support-fab"
+        onClick={openSupportLink}
+        aria-label="Открыть поддержку"
+        title="Поддержка"
+      >
+        <span className="support-fab__icon" aria-hidden="true">?</span>
+        <span className="support-fab__text">Поддержка</span>
+      </button>
+      <ToastContainer />
+      <ConfirmDialog />
     </>
   );
 }
