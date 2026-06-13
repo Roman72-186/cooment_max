@@ -171,16 +171,19 @@ export function App() {
           </span>
         </footer>
       )}
-      <button
-        type="button"
-        className="support-fab"
-        onClick={openSupportLink}
-        aria-label="Открыть поддержку"
-        title="Поддержка"
-      >
-        <span className="support-fab__icon" aria-hidden="true">?</span>
-        <span className="support-fab__text">Поддержка</span>
-      </button>
+      {/* На странице комментариев (открывается по кнопке «Комментарии») FAB поддержки скрыт */}
+      {page.id !== 'comments' && (
+        <button
+          type="button"
+          className="support-fab"
+          onClick={openSupportLink}
+          aria-label="Открыть поддержку"
+          title="Поддержка"
+        >
+          <span className="support-fab__icon" aria-hidden="true">?</span>
+          <span className="support-fab__text">Поддержка</span>
+        </button>
+      )}
       <ToastContainer />
       <ConfirmDialog />
     </>
