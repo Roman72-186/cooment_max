@@ -65,7 +65,12 @@
       "Bash(cat)",
       "Read(//tmp/**)",
       "Bash(bash .claude/skills/git-pushing/scripts/smart_commit.sh \"fix: updateCounters передаёт pollRows в buildPostKeyboard — кнопки опроса больше не пропадают каждые 60 сек\")",
-      "Bash(bash /c/Users/User/.claude/skills/git-pushing/scripts/smart_commit.sh \"fix: updateCounters передаёт pollRows в buildPostKeyboard — кнопки опроса больше не пропадают каждые 60 сек\")"
+      "Bash(bash /c/Users/User/.claude/skills/git-pushing/scripts/smart_commit.sh \"fix: updateCounters передаёт pollRows в buildPostKeyboard — кнопки опроса больше не пропадают каждые 60 сек\")",
+      "Bash(cp -r \"C:/Users/User/Desktop/Project/cooment_max/.claude/ui-ux-pro-max-skill/.claude/skills/banner-design\" \"C:/Users/User/Desktop/Project/cooment_max/.claude/skills/\")",
+      "Bash(cp -r \"C:/Users/User/Desktop/Project/cooment_max/.claude/ui-ux-pro-max-skill/.claude/skills/brand\" \"C:/Users/User/Desktop/Project/cooment_max/.claude/skills/\")",
+      "Bash(cp -r \"C:/Users/User/Desktop/Project/cooment_max/.claude/ui-ux-pro-max-skill/.claude/skills/design\" \"C:/Users/User/Desktop/Project/cooment_max/.claude/skills/\")",
+      "Bash(cp -r \"C:/Users/User/Desktop/Project/cooment_max/.claude/ui-ux-pro-max-skill/.claude/skills/design-system\" \"C:/Users/User/Desktop/Project/cooment_max/.claude/skills/\")",
+      "Bash(cp -r \"C:/Users/User/Desktop/Project/cooment_max/.claude/ui-ux-pro-max-skill/.claude/skills/slides\" \"C:/Users/User/Desktop/Project/cooment_max/.claude/skills/\")"
     ]
   }
 }
