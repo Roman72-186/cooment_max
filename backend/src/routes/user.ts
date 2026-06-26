@@ -1,7 +1,7 @@
 // GET /api/user/me — текущий пользователь + список его каналов
 // PATCH /api/user/notifications — включить/отключить уведомления об ответах
 import { Router } from 'express';
-import { pool } from '../db/db.js';
+import { pool, upsertUser } from '../db/db.js';
 import { requireAuth } from '../middleware/auth.js';
 
 export const userRouter = Router();
@@ -10,28 +10,20 @@ userRouter.get('/me', requireAuth, async (req, res) => {
   const maxUser = req.maxUser!;
 
   try {
-    // Upsert пользователя — гарантируем что он есть в БД
-    // ref_code генерируем при создании
-    const { rows: userRows } = await pool.query(
-      `INSERT INTO users (max_user_id, name, username, ref_code)
-       VALUES ($1, $2, $3, substr(md5(random()::text), 1, 8))
-       ON CONFLICT (max_user_id) DO UPDATE
-         SET name     = EXCLUDED.name,
-             username = COALESCE(EXCLUDED.username, users.username)
-       RETURNING
-         id, max_user_id, name, username,
-         plan, plan_expires, is_admin, ref_code, referred_by,
-         reply_notifications_enabled, created_at`,
-      [maxUser.user_id, maxUser.name, maxUser.username ?? null]
-    );
-    const user = userRows[0];
+    // Upsert пользователя через общий helper из db.ts
+    const user = await upsertUser({
+      max_user_id: maxUser.user_id,
+      name: maxUser.name,
+      username: maxUser.username ?? null,
+    });
 
     // Загружаем список каналов пользователя
     // total_comments считаем живым подзапросом — колонка channels.total_comments не обновляется
     const { rows: channelRows } = await pool.query(
       `SELECT
          id, max_chat_id, channel_name, is_active,
-         post_count, comments_enabled, notifications_enabled, banned_words, post_reactions, connected_at,
+         post_count, comments_enabled, notifications_enabled, banned_words, post_reactions,
+         poll_enabled, poll_question, poll_options, connected_at,
          COALESCE((
            SELECT COUNT(*) FROM comments cm
            JOIN posts p ON p.id = cm.post_id

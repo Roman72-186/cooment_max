@@ -6,6 +6,7 @@
 import { Router, type Request } from 'express';
 import { pool } from '../db/db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout.js';
 import crypto from 'crypto';
 
 export const paymentsRouter = Router();
@@ -13,6 +14,120 @@ export const paymentsRouter = Router();
 const TBANK_API  = 'https://securepay.tinkoff.ru/v2';
 const PRO_PRICE  = parseInt(process.env.PRO_PRICE_RUB ?? '299', 10);  // рубли
 const PRO_DAYS   = 30;
+const FIRST_REFERRAL_REWARD_DAYS = 30;
+
+function getReferralCommissionPercent(paidReferralsCount: number): number {
+  if (paidReferralsCount <= 5) return 10;
+  if (paidReferralsCount <= 10) return 13;
+  if (paidReferralsCount <= 20) return 15;
+  return 20;
+}
+
+function formatRub(amount: number): string {
+  return amount.toLocaleString('ru-RU', {
+    minimumFractionDigits: Number.isInteger(amount) ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+async function notifyReferralReward(maxUserId: string | number, text: string): Promise<void> {
+  const botToken = process.env.MAX_BOT_TOKEN;
+  if (!botToken) return;
+
+  fetchWithTimeout(`https://platform-api.max.ru/messages?user_id=${maxUserId}`, {
+    method: 'POST',
+    headers: { 'Authorization': botToken, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, format: 'markdown' }),
+    timeoutMs: 5000,
+  }).catch(e => console.error('Ошибка отправки уведомления рефереру:', e));
+}
+
+async function applyReferralReward(referredUserId: number, paymentId: number, amountRub: number): Promise<void> {
+  const { rows: referralRows } = await pool.query(
+    `SELECT u.referred_by, ref.max_user_id
+       FROM users u
+       LEFT JOIN users ref ON ref.id = u.referred_by
+      WHERE u.id = $1
+        AND ref.plan = 'pro'
+        AND (ref.plan_expires IS NULL OR ref.plan_expires > NOW())
+        AND EXISTS (
+          SELECT 1 FROM payments paid
+           WHERE paid.user_id = ref.id AND paid.status = 'succeeded'
+        )`,
+    [referredUserId]
+  );
+
+  const referrerId = referralRows[0]?.referred_by;
+  if (!referrerId) return;
+
+  const { rows: firstRewardRows } = await pool.query(
+    `INSERT INTO referral_rewards (
+       referrer_id, referred_user_id, payment_id, reward_type,
+       reward_days, commission_percent, commission_amount_rub, status
+     )
+     VALUES ($1, $2, $3, 'first_pro_days', $4, 0, 0, 'approved')
+     ON CONFLICT DO NOTHING
+     RETURNING id`,
+    [referrerId, referredUserId, paymentId, FIRST_REFERRAL_REWARD_DAYS]
+  );
+
+  if (firstRewardRows[0]) {
+    const { rows: refRows } = await pool.query(
+      `UPDATE users
+          SET plan         = 'pro',
+              plan_expires = GREATEST(COALESCE(plan_expires, NOW()), NOW())
+                            + (INTERVAL '1 day' * $2)
+        WHERE id = $1
+        RETURNING max_user_id`,
+      [referrerId, FIRST_REFERRAL_REWARD_DAYS]
+    );
+
+    if (refRows[0]?.max_user_id) {
+      await notifyReferralReward(
+        refRows[0].max_user_id,
+        `🎉 По вашей реферальной ссылке впервые оплатили **PRO**!\n\n+${FIRST_REFERRAL_REWARD_DAYS} дней начислено на ваш аккаунт.`
+      );
+    }
+    return;
+  }
+
+  const { rows: paidRows } = await pool.query(
+    `SELECT COUNT(DISTINCT u.id)::int AS cnt
+       FROM users u
+       JOIN payments p ON p.user_id = u.id
+      WHERE u.referred_by = $1 AND p.status = 'succeeded'`,
+    [referrerId]
+  );
+  const paidReferralsCount = Number(paidRows[0]?.cnt ?? 0);
+  const commissionPercent = getReferralCommissionPercent(paidReferralsCount);
+  const commissionAmountRub = Math.round(amountRub * commissionPercent) / 100;
+
+  const { rows: commissionRows } = await pool.query(
+    `INSERT INTO referral_rewards (
+       referrer_id, referred_user_id, payment_id, reward_type,
+       reward_days, commission_percent, commission_amount_rub,
+       paid_referrals_count, status
+     )
+     VALUES ($1, $2, $3, 'commission', 0, $4, $5, $6, 'approved')
+     ON CONFLICT DO NOTHING
+     RETURNING id`,
+    [
+      referrerId,
+      referredUserId,
+      paymentId,
+      commissionPercent,
+      commissionAmountRub,
+      paidReferralsCount,
+    ]
+  );
+
+  if (commissionRows[0] && referralRows[0]?.max_user_id) {
+    await notifyReferralReward(
+      referralRows[0].max_user_id,
+      `💸 Повторная оплата PRO по вашей реферальной ссылке.\n\nНачислена комиссия ${commissionPercent}%: **${formatRub(commissionAmountRub)} ₽**.`
+    );
+  }
+}
 
 // ─── Подпись запроса ────────────────────────────────────────────
 // Алгоритм T-Bank: взять все поля (+ Password), отсортировать по ключу,
@@ -38,10 +153,11 @@ function getTerminalKey(): string {
 
 async function tbankRequest<T>(path: string, body: Record<string, unknown>): Promise<T> {
   const payload = { ...body, Token: generateToken(body) };
-  const res = await fetch(`${TBANK_API}${path}`, {
+  const res = await fetchWithTimeout(`${TBANK_API}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    timeoutMs: 10000,
   });
   const data = await res.json() as T & { Success?: boolean; Message?: string };
   if (!res.ok || data.Success === false) {
@@ -253,12 +369,12 @@ paymentsRouter.post('/webhook', async (req, res) => {
     if (status === 'CONFIRMED' && orderId) {
       // Проверяем идемпотентность
       const { rows } = await pool.query(
-        'SELECT id, user_id, status FROM payments WHERE id = $1',
+        'SELECT id, user_id, status, amount_rub FROM payments WHERE id = $1',
         [parseInt(orderId, 10)]
       );
       if (!rows[0] || rows[0].status === 'succeeded') return;
 
-      const { id: payId, user_id: userId } = rows[0];
+      const { id: payId, user_id: userId, amount_rub: paymentAmountRub } = rows[0];
 
       // Обновляем статус платежа
       await pool.query(
@@ -285,30 +401,7 @@ paymentsRouter.post('/webhook', async (req, res) => {
         [payId]
       );
 
-      // Бонус рефереру: +30 дней PRO + уведомление в MAX
-      const { rows: refRows } = await pool.query(
-        `UPDATE users
-            SET plan         = 'pro',
-                plan_expires = GREATEST(COALESCE(plan_expires, NOW()), NOW())
-                              + (INTERVAL '1 day' * 30)
-          WHERE id = (SELECT referred_by FROM users WHERE id = $1)
-          RETURNING max_user_id`,
-        [userId]
-      );
-
-      if (refRows[0]?.max_user_id) {
-        const botToken = process.env.MAX_BOT_TOKEN;
-        if (botToken) {
-          fetch(`https://platform-api.max.ru/messages?user_id=${refRows[0].max_user_id}`, {
-            method: 'POST',
-            headers: { 'Authorization': botToken, 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              text: '🎉 По вашей реферальной ссылке оформили **PRO**!\n\n+30 дней начислено на ваш аккаунт.',
-              format: 'markdown',
-            }),
-          }).catch(e => console.error('Ошибка отправки уведомления рефереру:', e));
-        }
-      }
+      await applyReferralReward(userId, payId, Number(paymentAmountRub ?? amount));
 
       console.log(JSON.stringify({
         ts: new Date().toISOString(), level: 'info',

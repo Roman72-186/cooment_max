@@ -1,3 +1,8 @@
+﻿> Совместимый вход для Claude Code: перед работой читать [AGENTS.md](AGENTS.md), затем [../AGENTS.md](../AGENTS.md).  
+> Сохранить сессию → C:\Users\User\.agents\skills\save-session\SKILL.md → session-handoffs/current.md.  
+> Прочитай сохранённую сессию → сначала session-handoffs/current.md, затем [AGENTS.md](AGENTS.md).
+
+---
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
@@ -7,6 +12,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Все ответы Claude — **на русском языке**
 - Все комментарии в коде — **на русском языке**
 - Названия переменных, функций, файлов — на английском (код-конвенция)
+
+---
+
+## Общие слои
+
+Этот проект использует общие принципы и активы из корня монорепо `Project/`:
+
+- **Голос и стиль:** [../ai-clone/voice/](../ai-clone/voice/), [../ai-clone/style/](../ai-clone/style/)
+- **Принципы кода:** [../ai-clone/principles/code.md](../ai-clone/principles/code.md)
+- **Принципы продукта:** [../ai-clone/principles/product.md](../ai-clone/principles/product.md)
+- **Уроки и подтверждённые решения:** [../ai-clone/feedback/](../ai-clone/feedback/) — `Why / How to apply`
+- **Совет директоров (методы):** [../mastery/INDEX.md](../mastery/INDEX.md)
+- **Активные планы:** [../plans/](../plans/) — файлы с префиксом `cooment-max-`
+- **Ретроспективы:** [../retrospectives/](../retrospectives/)
+- **Корневой навигатор:** [../CLAUDE.md](../CLAUDE.md)
 
 ---
 
@@ -110,14 +130,34 @@ docker exec -it mc_redis redis-cli -a <REDIS_PASSWORD>
 
 ### Deploy
 
-Сервер НЕ имеет git-репозитория. Деплой только через SFTP (paramiko):
-1. Загрузить изменённые файлы через `sftp.open(remote_path, 'w').write(content)`
-2. Пересобрать нужный контейнер: `docker compose up -d --build mc_bot` (или mc_backend, mc_nginx)
+Сервер НЕ имеет git-репозитория. Деплой через одноразовые Python SFTP-скрипты в корне репо (создаются под конкретную задачу, после применения удаляются).
 
-Mini App (изменения в `miniapp/`) — пересобирать `mc_nginx`:
-```bash
-docker compose up -d --build mc_nginx   # занимает ~3 мин (npm ci + build внутри Docker)
+**Паттерн деплоя** — каждый скрипт: `upload files → apply migration → rebuild containers`. Шаблон:
+```python
+# python deploy_<task>.py
+# 1. paramiko SFTP: залить изменённые файлы в /opt/max-comments/
+# 2. docker exec mc_postgres psql ... < миграция (если есть)
+# 3. docker-compose up -d --build mc_bot|mc_backend|mc_nginx (что менялось)
 ```
+
+VPS root: `/opt/max-comments/`. Контейнеры: `mc_bot`, `mc_backend`, `mc_nginx`.
+
+**Что пересобирать:**
+- `bot/` изменения → `mc_bot`
+- `backend/` изменения → `mc_backend`  
+- `miniapp/` изменения → `mc_nginx` (~3 мин, npm ci + Vite build внутри Docker)
+- Изменения в обоих → `mc_bot mc_backend` одной командой
+
+**Применение SQL-миграций на VPS:**
+```bash
+# Одна миграция
+docker exec -i mc_postgres psql -U mcuser -d maxcomments < infra/migrations/004_polls.sql
+
+# Все миграции по порядку (idempotent)
+bash infra/migrations/apply.sh
+```
+
+Миграции в `infra/migrations/` нумеруются (`001_`, `002_`, ...) и используют `IF NOT EXISTS` — безопасно запускать повторно.
 
 ---
 
@@ -132,7 +172,7 @@ docker compose up -d --build mc_nginx   # занимает ~3 мин (npm ci + b
 - MAX Bridge auth: HMAC-SHA256 валидация `initData` — проверять при каждом запросе в `backend/src/middleware/auth.ts`
 - **Нет Vercel** — Mini App на том же VPS, раздаётся nginx из `/var/www/miniapp` (собирается в Dockerfile.nginx)
 - **rootDir: ".."** в `tsconfig.json` бота и backend — намеренно, чтобы TypeScript видел `../shared/` при компиляции. Из-за этого dist-путь: `dist/bot/src/index.js`, `dist/backend/src/index.js`
-- **`alert()`, `confirm()`, `prompt()` не работают в MAX Mini App** — падают молча без UI. Использовать React state + кастомные диалоги
+- **`alert()`, `confirm()`, `prompt()` не работают в MAX Mini App** — падают молча без UI. Использовать: `useAppStore().requestConfirm({message, onConfirm, variant})` → рендерится через `<ConfirmDialog>` (`miniapp/src/components/ConfirmDialog.tsx`); уведомления → `useAppStore().addToast({type, message})` → `<ToastContainer>` (`miniapp/src/components/Toast.tsx`)
 - **MAX не шлёт повторный `bot_added`** при повторном добавлении бота в канал → ручная синхронизация через `POST /api/channels/sync`
 - **`bot_added` структура**: `update.chat_id` и `update.user` на верхнем уровне, НЕ внутри `update.message`
 - **Docker `.env`**: `restart` не перечитывает переменные окружения. После изменения `.env` — `docker compose up -d` (пересоздаёт контейнер)
@@ -151,8 +191,8 @@ docker compose up -d --build mc_nginx   # занимает ~3 мин (npm ci + b
 | `onBotAdded.ts` | bot added to channel | регистрирует канал, определяет owner через getChatAdmins, отправляет welcome-сообщение |
 | `onBotRemoved.ts` | bot removed | деактивирует канал (is_active = false) |
 | `onBotStarted.ts` | user starts bot | upsert user, обрабатывает referral codes; `start=notify` → DM-подтверждение подписки |
-| `onPostCreated.ts` | channel post published | сохраняет пост, прикрепляет кнопку Comments + emoji-реакции |
-| `onCallback.ts` | button tap | toggle emoji-реакции на посте через `togglePostReaction()`, перестраивает клавиатуру с новыми счётчиками; `answerCallback` — fire-and-forget (кнопка отпускается немедленно), `editMessage` — дебаунс 500 мс (серия быстрых кликов → один API-вызов) |
+| `onPostCreated.ts` | channel post published | сохраняет пост, прикрепляет кнопку Comments + emoji-реакции + кнопки опроса (если настроены) |
+| `onCallback.ts` | button tap | три типа payload: `react_<postId>_<emoji>` → toggle реакции; `poll_<postId>_<optionIdx>` → toggle голоса; `poll_info_<postId>` — заголовок опроса (не интерактивен, только answerCallback). **Дедупликация**: MAX присылает каждый клик **дважды** (~4 мс разница) — `DEDUP_WINDOW_MS = 300ms` фильтрует дубли. `answerCallback` — fire-and-forget ПЕРВЫМ (снимает анимацию кнопки), `editMessage` — дебаунс **300 мс** |
 
 ### Background jobs (`bot/src/jobs/`)
 
@@ -182,7 +222,7 @@ GET  /api/posts/:id                   — данные поста
 POST /api/posts/:id/view              — инкрементировать view_count
 
 GET  /api/comments?post_id=X          — комментарии с реакциями и liked_by_me
-POST /api/comments                    — создать комментарий (поддержка parent_id)
+POST /api/comments                    — создать комментарий (parent_id + attachments: фото/стикеры)
 DELETE /api/comments/:id              — скрыть комментарий (автор или владелец канала)
 
 POST /api/reactions/:commentId        — toggle emoji-реакция (❤️ по умолчанию)
@@ -193,7 +233,10 @@ POST /api/payments/create             — T-Bank: создать платёж PR
 POST /api/payments/webhook            — T-Bank webhook (верификация подписи SHA-256)
 GET  /api/payments/status             — статус PRO, дата истечения
 
-GET  /api/referrals/stats             — кол-во рефералов + реферальная ссылка
+GET  /api/referrals/stats             — статистика реф-программы: тиры комиссии, баланс ₽, 5-уровневое дерево
+                                        (доступ только при активном купленном PRO → referral_available)
+
+GET  /api/polls/:postId/results       — результаты опроса поста (optionalAuth → voted_option)
 
 GET  /c/:commentId                    — короткая ссылка на комментарий → 302 в MAX deep-link
                                         (регистрируется в backend/src/index.ts, не в роутерах)
@@ -213,6 +256,8 @@ PATCH /api/admin/users/:id            — сменить план (requireAdminU
 DELETE /api/admin/users/:id           — удалить пользователя каскадно (requireAdminUser)
 PATCH /api/admin/channels/:id         — активировать/деактивировать (requireAdminUser)
 DELETE /api/admin/channels/:id        — удалить канал каскадно (requireAdminUser)
+GET  /api/admin/referrals             — балансы и комиссии всех рефереров (requireAdminUser)
+POST /api/admin/referrals/:id/adjust  — ручное начисление/списание ₽ на баланс (requireAdminUser)
 
 GET  /health
 ```
@@ -239,10 +284,11 @@ GET  /health
 | `DashboardPage` | Список каналов владельца + статистика |
 | `AnalyticsPage` | Графики просмотров/комментариев/реакций |
 | `InboxPage` | Агрегатор последних комментариев по всем (или одному) каналу владельца |
-| `SettingsPage` | Настройки канала (banned_words с категориями, emoji, флаги) |
+| `SettingsPage` | Настройки канала (banned_words с категориями, emoji, флаги, шаблон опроса через `PollSettingsEditor`) |
 | `PricingPage` | PRO-тариф + промо-код + кнопка оплаты T-Bank |
 | `AdminPage` | Суперадмин: вкладки Users, Channels, Payments, Promo Codes, Settings |
 | `OnboardingPage` | Первичная настройка при добавлении бота |
+| `ReferralPage` | Реф-программа: ссылка, тир комиссии, баланс ₽, 5-уровневое дерево (только при активном купленном PRO) |
 
 Маршрутизация — через Zustand-стор (`useAppStore`), не через React Router. Текущая страница хранится как `page: { id, ...params }`. При смене страницы через `setPage()` — стор автоматически очищает `comments`, `loading`, `error`, `replyTo` (предотвращает показ устаревших данных). Паттерны `startapp` → страница:
 
@@ -254,10 +300,22 @@ GET  /health
 | `settings_<channelId>` | SettingsPage |
 | `inbox` | InboxPage |
 | `pricing` | PricingPage |
+| `referrals` | ReferralPage |
 | *(нет каналов)* | OnboardingPage |
 | *(есть каналы)* | DashboardPage |
 | *(is_admin = true)* | AdminPage |
 | *(ошибка загрузки)* | ErrorPage — inline с кнопкой "Попробовать снова" (НЕ онбординг) |
+
+### Ключевые абстракции Mini App
+
+- **`miniapp/src/bridge/maxBridge.ts`** — единственная точка доступа к `window.WebApp`. Все вызовы Bridge (получить пользователя, `initData`, `start_param`, `showAlert`) идут через этот файл. `alert()`/`confirm()`/`prompt()` заменены на `WebApp.showAlert()`/`WebApp.showConfirm()`.
+- **`miniapp/src/api/backend.ts`** — axios-клиент с interceptor: автоматически добавляет `X-Init-Data` из Bridge в каждый запрос. Все запросы к REST API идут только через него.
+- **`miniapp/src/store/useAppStore.ts`** — Zustand стор. `setPage()` автоматически сбрасывает `comments/loading/error/replyTo` при навигации. Дополнительные API: `addToast(toast)` / `removeToast(id)` — управление тостами; `requestConfirm(req)` / `resolveConfirm()` — показ модального диалога подтверждения.
+- **`miniapp/src/components/PollSettingsEditor.tsx`** — редактор шаблона опроса (вопрос + варианты), встроен в SettingsPage; изменения применяются к новым постам, не к уже опубликованным.
+
+### Code style
+
+Prettier (`.prettierrc`): `singleQuote: true`, `semi: true`, `tabWidth: 2`, `trailingComma: "es5"`, `printWidth: 100`.
 
 ### Система реакций — два независимых механизма
 
@@ -306,15 +364,24 @@ GET  /health
 - `GET /api/payments/config` публичный (no auth) — Mini App читает актуальную цену до инициализации юзера
 - Административное изменение через `PATCH /api/admin/settings` (requireAdminUser)
 
+### Клавиатура поста — `buildPostKeyboard`
+
+`bot/src/api/maxClient.ts::buildPostKeyboard(postId, commentCount, reactions, commentsEnabled, selectedEmoji, pollRows)` — собирает inline_keyboard с порядком рядов:
+1. `[💬 Комментарии (N)]` — open_app кнопка (если `commentsEnabled`)
+2. Ряды вариантов опроса (если `pollRows.length > 0`) — каждый вариант на отдельном ряду, payload: `poll_<postId>_<idx>`
+3. `[😀 3] [❤️ 5]` — реакции в одном ряду, payload: `react_<postId>_<emoji>`
+
+Возвращает `null` если все три пустые — тогда `editMessage` отправляется без keyboard attachment.
+
 ### TypeScript shared types
 
-`shared/types.ts` — единственный источник типов для всех сервисов: `User`, `Channel`, `ChannelSummary`, `Post`, `Comment`, `Payment`, `AnalyticsDaily`, `WebhookUpdate`, `MaxUser`, `MaxMessage`.
+`shared/types.ts` — единственный источник типов для всех сервисов: `User`, `Channel`, `ChannelSummary`, `Post`, `Comment`, `CommentAttachment`, `Payment`, `AnalyticsDaily`, `WebhookUpdate`, `MaxUser`, `MaxMessage`, `MaxAttachment`, `PollOption`, `PollResults`, `PollResponse`.
 
 ---
 
 ## Data Model (PostgreSQL)
 
-Ядро: `users`, `channels`, `posts`, `comments`, `comment_reactions`, `reply_notifications`, `payments`, `analytics_daily`, `channel_bans`, `post_subscriptions`, `promo_codes`, `app_settings`
+Ядро: `users`, `channels`, `posts`, `comments`, `comment_reactions`, `reply_notifications`, `payments`, `analytics_daily`, `channel_bans`, `post_subscriptions`, `promo_codes`, `app_settings`, `post_polls`, `poll_votes`, `referral_rewards`, `referral_balance_adjustments`
 
 - `channels.discussion_chat_id` — зарезервировано (MAX API не поддерживает создание group chat ботом)
 - `posts.discussion_msg_id` — зарезервировано
@@ -332,6 +399,13 @@ GET  /health
 - `channels.banned_words TEXT[]` — массив стоп-слов для модерации
 - `promo_codes` — промо-коды со скидкой; `used_count` инкрементируется только при CONFIRMED
 - `app_settings` — key-value: `pro_price_rub`, `pro_days`; фоллбек к константам если пусто
+- `post_polls (id, post_id UNIQUE, question, options_json JSONB)` — один опрос на пост; `options_json = [{text: "..."}]`
+- `poll_votes (poll_id, user_max_id, option_idx)` — PK `(poll_id, user_max_id)` → один голос на пользователя; toggle через `db.togglePollVote()`
+- `channels.poll_enabled BOOLEAN`, `channels.poll_question TEXT`, `channels.poll_options JSONB` — шаблон опроса на уровне канала (миграция 005); применяется к **новым** постам, изменение не затрагивает уже опубликованные
+- `posts.poll_question TEXT`, `posts.poll_options JSONB` — **снапшот** настроек опроса на момент публикации (аналогично `posts.post_reactions`)
+- `comments.attachments_json JSONB` — вложения комментария: `CommentAttachment` = `{type:'image', url, ...}` | `{type:'sticker', sticker_id, emoji}`; backend санитизирует (лимит на кол-во, MIME JPEG/PNG/WebP, размер) в `backend/src/routes/comments.ts`
+- `referral_rewards (referrer_id, referred_user_id, payment_id, reward_type, reward_days, commission_amount_rub, status)` — ledger реф-вознаграждений; `reward_type` = `first_pro_days` (разовый +30 дней, уникальный индекс на пару) или `commission` (% от платежа); пишется в T-Bank webhook при CONFIRMED
+- `referral_balance_adjustments (referrer_id, admin_user_id, amount_rub, reason)` — ручные корректировки баланса админом (может быть отрицательной)
 
 ### Важно: неполная схема `infra/init.sql`
 
@@ -380,7 +454,17 @@ CREATE INDEX IF NOT EXISTS idx_reply_notifications_unsent
 ALTER TABLE users ADD COLUMN IF NOT EXISTS reply_notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE;
 ```
 
-Последующие миграции применялись вручную через `docker exec mc_postgres psql`.
+Последующие миграции в `infra/migrations/` (применять через `apply.sh` или вручную):
+- `001_create_app_settings.sql`
+- `002_promo_codes_and_payments.sql`
+- `003_post_reactions_snapshot.sql`
+- `004_polls.sql` — таблицы `post_polls`, `poll_votes`
+- `005_channel_poll_settings.sql` — шаблон опроса на уровне канала (`channels.poll_enabled/question/options`) + снапшот на уровне поста (`posts.poll_question/options`)
+- `006_performance_indexes.sql` — partial-индексы для polling комментариев, очереди уведомлений, аналитики
+- `007_comment_attachments.sql` — `comments.attachments_json JSONB` (фото и стикеры в комментариях)
+- `008_referral_rewards.sql` — ledger `referral_rewards` (тип `first_pro_days` / `commission`, тиры) + бэкфилл старых +30 дней
+- `009_referral_balance_adjustments.sql` — `referral_balance_adjustments` (ручные начисления/списания админом)
+- `010_referral_team_stats.sql` — гарантирует `ref_code` старым юзерам + индекс `idx_users_referred_by`
 
 Индексы: `comments.post_id`, `posts.channel_id`, `analytics_daily.(channel_id, date)`, `channels.owner_id`
 
@@ -412,9 +496,66 @@ Nginx использует нестандартные порты — уточн�
 - **PRO** (по умолчанию 299 ₽/мес, настраивается через `app_settings`): аналитика, неограниченные каналы, инструменты модерации
 - Платёжный провайдер: **T-Bank Acquiring** (подпись: SHA-256 от конкатенации отсортированных значений + Password)
 - Промо-коды: скидка в %, проверяются до создания платежа, `used_count` растёт только при CONFIRMED
-- Реферальная программа: +30 дней PRO за приведённого владельца канала (бонус начисляется в webhook)
+- **Реферальная программа** (доступна только при активном **купленном** PRO):
+  - При первом платеже приглашённого реферер получает разовый бонус **+30 дней** PRO (`reward_type='first_pro_days'`, выдаётся один раз)
+  - Далее — **комиссия в % с каждого платежа** по тирам от числа конвертированных рефералов: ≤5 → 10%, ≤10 → 13%, ≤20 → 15%, >20 → 20% (логика дублируется в `payments.ts`, `referrals.ts`, `admin.ts` — менять синхронно)
+  - 5-уровневое дерево рефералов (рекурсивный CTE в `GET /api/referrals/stats`); баланс = сумма комиссий + ручные корректировки админа
+  - Все начисления идут в ledger `referral_rewards` из T-Bank webhook при CONFIRMED — идемпотентно через уникальные индексы по `(payment_id, reward_type)`
 - PRO-гейты: `backend/src/middleware/planGate.ts`
 - Auto-renew при истечении: `backend/src/jobs/autoRenew.ts` (содержит устаревший ЮКасса-код — не активировать без рефакторинга)
+
+---
+
+## Рабочий процесс разработки
+
+### Bulletproof workflow
+
+Для нетривиальных задач (новые фичи, рефакторинг, архитектурные изменения) используется скилл `/bulletproof` — 12-этапный процесс:
+
+```
+/bulletproof   # запустить скилл
+```
+
+Артефакты сохраняются в:
+- `thoughts/research/YYYY-MM-DD-<task>.md` — результаты исследования (Stage 1)
+- `specs/YYYY-MM-DD-<task>.md` — спека: что и зачем (Stage 2)
+- `plans/YYYY-MM-DD-<task>.md` — план реализации с фазами (Stage 3)
+- `plans/archive/` — выполненные планы
+- `progress/<task>-handoff.md` — handoff между сессиями
+
+Размер задачи определяет режим: **S** (баг-фикс, 1-2 файла) → этапы 1→4→5→6→7; **M** (фича, 3-10 файлов) → этапы 1-10; **L** (архитектура, 10+ файлов) → все 12 этапов.
+
+> Новые спеки → `specs/` (со `s`). Папка `spec/` (без `s`) была легаси-скретчем и удалена.
+
+### Кастомные скиллы (`.claude/skills/`)
+
+| Скилл | Когда применять |
+|-------|----------------|
+| `/bulletproof` | Любая нетривиальная задача — основной workflow |
+| `/harden` | Перед деплоем UI: empty states, обработка ошибок, edge cases |
+| `/polish` | Финальный прогон UI перед шипом |
+| `/audit` | Технический аудит: a11y, performance, responsive |
+| `/optimize` | Если Mini App тормозит на мобильных |
+| `/shape` | Планирование UX нового экрана до написания кода |
+| `/critique` | Оценить существующий UI с UX-скорингом |
+| `/clarify` | Улучшить тексты ошибок, лейблы, onboarding-копи |
+
+Остальные визуальные скиллы (`/animate`, `/bolder`, `/colorize`, `/delight`, `/distill`, `/layout`, `/typeset`, `/quieter`, `/adapt`, `/overdrive`) — по контексту при работе с Mini App UI.
+
+### Кастомные агенты
+
+В `.claude/agents/` живут специализированные агенты для подзадач:
+- `architect.md` — проектирование архитектуры до написания кода
+- `implementer.md` — реализация по готовому плану из `specs/`
+- `reviewer.md` — код-ревью после реализации (только читает, не меняет)
+- `tester.md` — написание тестов (Vitest) после реализации
+- `save_ses.md` — сохранение контекста сессии
+
+### Ветки и коммиты
+
+- Каждая задача → ветка `feature/<task-name>`
+- После всех гейтов → squash merge в `main`
+- Гейты перед merge: `npx tsc --noEmit` (bot + backend + miniapp) + `npm test` в bot/
 
 ---
 

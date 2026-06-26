@@ -1,5 +1,6 @@
 // Backend REST API для Mini App
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { commentsRouter } from './routes/comments.js';
 import { postsRouter } from './routes/posts.js';
 import { reactionsRouter } from './routes/reactions.js';
@@ -8,11 +9,73 @@ import { channelsRouter } from './routes/channels.js';
 import { paymentsRouter } from './routes/payments.js';
 import { adminRouter } from './routes/admin.js';
 import { referralsRouter } from './routes/referrals.js';
+import { pollsRouter } from './routes/polls.js';
 import { startAutoRenewJob } from './jobs/autoRenew.js';
 import { pool } from './db/db.js';
 
 const app = express();
-app.use(express.json());
+
+// Доверяем заголовку X-Forwarded-For от nginx reverse proxy
+// Без этого express-rate-limit видит IP nginx, а не реального клиента
+app.set('trust proxy', 1);
+
+app.use(express.json({ limit: '8mb' }));
+app.use((err: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err && typeof err === 'object' && 'type' in err && err.type === 'entity.too.large') {
+    res.status(413).json({ error: 'Фото слишком большое. Выберите фото меньше или отправьте одно за раз.' });
+    return;
+  }
+  next(err);
+});
+
+// ── Request Logging ────────────────────────────────────────────────────────
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'info',
+      msg: 'http',
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      ms: Date.now() - start,
+      ip: req.ip,
+    }));
+  });
+  next();
+});
+
+// ── Rate Limiting ──────────────────────────────────────────────────────────
+// Общий лимит: 200 запросов в минуту на IP
+const generalLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Слишком много запросов. Попробуйте через минуту.' },
+});
+// Платёжные эндпоинты: 10 запросов в минуту на IP
+const paymentsLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Слишком много запросов. Попробуйте через минуту.' },
+});
+// Создание комментариев: 30 запросов в минуту на IP
+const commentsLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Слишком много запросов. Попробуйте через минуту.' },
+});
+
+app.use(generalLimiter);
+app.use('/api/payments', paymentsLimiter);
+app.use('/api/comments', commentsLimiter);
+// ──────────────────────────────────────────────────────────────────────────
 
 // CORS — разрешаем запросы от Mini App (VPS nginx)
 app.use((_req, res, next) => {
@@ -40,6 +103,7 @@ app.use('/api/channels', channelsRouter);
 app.use('/api/payments', paymentsRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/referrals', referralsRouter);
+app.use('/api/polls', pollsRouter);
 
 // Короткая ссылка на комментарий: /c/:id → 302 в MAX deep link
 app.get('/c/:commentId', async (req, res) => {
@@ -75,4 +139,13 @@ app.listen(PORT, () => {
     level: 'info',
     msg: `Backend запущен на порту ${PORT}`,
   }));
+
+  // Предупреждение: аутентификация отключена если DEV_AUTH=true
+  if (process.env.DEV_AUTH === 'true') {
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      level: 'warn',
+      msg: '⚠️  DEV_AUTH=true — аутентификация ОТКЛЮЧЕНА. НЕ использовать на prod!',
+    }));
+  }
 });

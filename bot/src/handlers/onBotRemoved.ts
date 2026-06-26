@@ -6,10 +6,18 @@ import { logger } from '../utils/logger.js';
 import type { WebhookUpdate } from '../../../shared/types.js';
 
 export async function onBotRemoved(update: WebhookUpdate): Promise<void> {
-  const message = update.message;
-  if (!message) return;
+  const rawChatId = update.chat_id ?? update.message?.recipient?.chat_id;
+  if (!rawChatId) {
+    logger.warn('onBotRemoved: нет chat_id в событии', { update });
+    return;
+  }
 
-  const chatId = message.recipient.chat_id;
+  const chatId = String(rawChatId);
+  const chatType = update.chat_type ?? update.message?.recipient?.chat_type;
+  if (chatType && chatType !== 'channel') {
+    logger.debug('onBotRemoved: игнорируем не-канал', { chatId, chatType });
+    return;
+  }
 
   logger.info('Бот удалён из канала', { chatId });
 

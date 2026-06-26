@@ -15,12 +15,46 @@ import type { WebhookUpdate } from '../../shared/types.js';
 const app = express();
 app.use(express.json());
 
+// Дедупликация: храним последние 1000 update_id (TTL 5 минут)
+// Защита от повторной доставки webhook при таймауте MAX
+const processedUpdates = new Map<number, number>(); // update_id → timestamp
+const DEDUP_TTL_MS = 5 * 60_000;
+const DEDUP_MAX_SIZE = 1000;
+
+function isDuplicate(updateId: number): boolean {
+  const now = Date.now();
+  // Очищаем устаревшие записи при превышении лимита
+  if (processedUpdates.size >= DEDUP_MAX_SIZE) {
+    for (const [id, ts] of processedUpdates) {
+      if (now - ts > DEDUP_TTL_MS) processedUpdates.delete(id);
+    }
+  }
+  if (processedUpdates.has(updateId)) return true;
+  processedUpdates.set(updateId, now);
+  return false;
+}
+
 // Обработчик входящих webhook-событий от MAX
 app.post('/webhook', async (req, res) => {
+  if (config.webhookSecret) {
+    const incomingSecret = req.get('X-Max-Bot-Api-Secret');
+    if (incomingSecret !== config.webhookSecret) {
+      logger.warn('Webhook отклонён: неверный X-Max-Bot-Api-Secret');
+      res.sendStatus(401);
+      return;
+    }
+  }
+
   // Отвечаем 200 сразу — MAX не ждёт результата обработки
   res.sendStatus(200);
 
   const update = req.body as WebhookUpdate;
+
+  // Пропускаем дублирующиеся события (повторная доставка при таймауте)
+  if (update.update_id && isDuplicate(update.update_id)) {
+    logger.debug('Дубль webhook пропущен', { updateId: update.update_id });
+    return;
+  }
 
   logger.info('Получен webhook RAW', { body: JSON.stringify(req.body).slice(0, 500) });
   logger.debug('Получен webhook', { updateType: update.update_type, updateId: update.update_id });

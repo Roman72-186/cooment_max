@@ -31,6 +31,9 @@ export interface Channel {
   banned_words: string[];            // список стоп-слов (PRO)
   post_reactions: string[];          // эмодзи реакций под постами (до 5)
   notifications_enabled: boolean;    // уведомлять владельца о новых комментариях
+  poll_enabled: boolean;             // включить опрос для новых постов
+  poll_question: string | null;      // вопрос шаблона опроса
+  poll_options: Array<{ text: string }> | null; // варианты шаблона опроса
 }
 
 // Краткая сводка канала для списка на Dashboard
@@ -81,19 +84,39 @@ export interface Post {
   view_count: number;
   comment_count: number;
   published_at: string;
-  attachments_json?: unknown[];     // оригинальные медиа-вложения (фото/видео)
+  attachments_json?: MaxAttachment[];  // оригинальные медиа-вложения (фото/видео)
   comments_enabled: boolean;        // зафиксировано на момент создания поста
   post_reactions: string[];         // зафиксировано на момент создания поста
   last_notified_at: string | null;  // время последней отправки уведомления владельцу
+  poll_question: string | null;     // снапшот вопроса опроса на момент создания поста
+  poll_options: Array<{ text: string }> | null; // снапшот вариантов опроса
 }
 
 // ─── КОММЕНТАРИЙ ─────────────────────────────────────────────────
+export type CommentAttachment =
+  | {
+      type: 'image';
+      url: string;
+      width?: number;
+      height?: number;
+      mime_type?: string;
+      filename?: string;
+      size?: number;
+    }
+  | {
+      type: 'sticker';
+      sticker_id: string;
+      emoji: string;
+      label?: string;
+    };
+
 export interface Comment {
   id: number;
   post_id: number;
   author_id: number;
   parent_id: number | null; // null = корневой комментарий
   text: string;
+  attachments_json: CommentAttachment[];
   is_hidden: boolean;
   created_at: string;
   // Поля из JOIN-запросов (добавляются в API-ответах)
@@ -129,6 +152,48 @@ export interface AnalyticsDaily {
   reactions: number;
 }
 
+// ─── ОПРОСЫ ──────────────────────────────────────────────────────
+
+// Один вариант в опросе (хранится в options_json)
+export interface PollOption {
+  text: string;
+}
+
+// Результаты опроса — ответ GET /api/polls/:postId/results
+export interface PollResults {
+  question: string;
+  options: Array<{
+    text: string;
+    count: number;
+    percent: number; // 0–100
+  }>;
+  total_votes: number;
+  voted_option: number | null; // индекс выбранного варианта или null
+}
+
+// Ответ API — оборачивает результаты (null если поста нет опроса)
+export interface PollResponse {
+  poll: PollResults | null;
+}
+
+// ─── МЕДИА-ВЛОЖЕНИЯ ──────────────────────────────────────────────
+// Вложение из MAX API (фото, видео, аудио, документ и т.д.)
+export interface MaxAttachment {
+  type: 'image' | 'video' | 'audio' | 'file' | 'sticker' | 'contact' | 'location' | string;
+  payload?: {
+    url?: string;
+    token?: string;
+    thumbnail?: { url: string };
+    width?: number;
+    height?: number;
+    duration?: number;
+    mime_type?: string;
+    filename?: string;
+    size?: number;
+    [key: string]: unknown;
+  };
+}
+
 // ─── СОБЫТИЯ WEBHOOK MAX ─────────────────────────────────────────
 export type UpdateType =
   | 'message_created'
@@ -149,7 +214,7 @@ export interface MaxMessage {
   body: {
     mid: string;
     text?: string;
-    attachments?: unknown[];
+    attachments?: MaxAttachment[];
   };
   sender: MaxUser;
   recipient: {

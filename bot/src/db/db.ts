@@ -15,16 +15,19 @@ export const pool = new Pool({
 // ─── ПОЛЬЗОВАТЕЛИ ────────────────────────────────────────────────
 
 // Найти или создать пользователя по его MAX ID
+// COALESCE: не затираем существующий username если новый = null
 export async function upsertUser(data: {
   max_user_id: number;
   name?: string;
   username?: string;
 }): Promise<User> {
   const result = await pool.query<User>(
-    `INSERT INTO users (max_user_id, name, username)
-     VALUES ($1, $2, $3)
+    `INSERT INTO users (max_user_id, name, username, ref_code)
+     VALUES ($1, $2, $3, substr(md5(random()::text), 1, 8))
      ON CONFLICT (max_user_id)
-     DO UPDATE SET name = EXCLUDED.name, username = EXCLUDED.username
+     DO UPDATE SET name = EXCLUDED.name,
+                   username = COALESCE(EXCLUDED.username, users.username),
+                   ref_code = COALESCE(users.ref_code, substr(md5(users.id::text || ':' || users.max_user_id::text), 1, 8))
      RETURNING *`,
     [data.max_user_id, data.name ?? null, data.username ?? null]
   );
@@ -70,7 +73,10 @@ export async function upsertChannel(data: {
 
 export async function getChannelByMaxChatId(maxChatId: string): Promise<Channel | null> {
   const result = await pool.query<Channel>(
-    'SELECT * FROM channels WHERE max_chat_id = $1',
+    `SELECT ch.*, owner.plan AS owner_plan, owner.plan_expires AS owner_plan_expires
+       FROM channels ch
+       LEFT JOIN users owner ON owner.id = ch.owner_id
+      WHERE ch.max_chat_id = $1`,
     [maxChatId]
   );
   return result.rows[0] ?? null;
@@ -102,10 +108,12 @@ export async function createPost(data: {
   attachments_json?: unknown[];
   comments_enabled?: boolean;
   post_reactions?: string[];
+  poll_question?: string | null;
+  poll_options?: Array<{ text: string }> | null;
 }): Promise<Post | undefined> {
   const result = await pool.query<Post>(
-    `INSERT INTO posts (channel_id, max_message_id, text_preview, attachments_json, comments_enabled, post_reactions)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO posts (channel_id, max_message_id, text_preview, attachments_json, comments_enabled, post_reactions, poll_question, poll_options)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (channel_id, max_message_id) DO NOTHING
      RETURNING *`,
     [
@@ -115,6 +123,8 @@ export async function createPost(data: {
       JSON.stringify(data.attachments_json ?? []),
       data.comments_enabled ?? true,
       data.post_reactions ?? [],
+      data.poll_question ?? null,
+      data.poll_options ? JSON.stringify(data.poll_options) : null,
     ]
   );
   return result.rows[0];
@@ -211,11 +221,17 @@ export async function initPostReactions(postId: number, emojis: string[]): Promi
   );
 }
 
+// Результат toggle-реакции: что именно произошло
+export type ReactionToggleResult =
+  | { ok: false }                                              // невалидный emoji
+  | { ok: true; action: 'removed'; emoji: string }            // сняли реакцию (тот же emoji)
+  | { ok: true; action: 'set'; emoji: string; prev: string | null }; // поставили (prev — прежний emoji или null)
+
 // Toggle реакции: один пользователь — одна реакция на пост (PK = post_id + max_user_id).
 // - Нажал новый эмодзи → старая реакция снимается, новая ставится
 // - Нажал тот же эмодзи → снимается (toggle off)
-// - Возвращает false если emoji не инициализирован для этого поста (невалидный payload)
-export async function togglePostReaction(postId: number, maxUserId: number, emoji: string): Promise<boolean> {
+// - Возвращает { ok: false } если emoji не инициализирован для этого поста (невалидный payload)
+export async function togglePostReaction(postId: number, maxUserId: number, emoji: string): Promise<ReactionToggleResult> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -227,7 +243,7 @@ export async function togglePostReaction(postId: number, maxUserId: number, emoj
     );
     if (validCheck.rows.length === 0) {
       await client.query('ROLLBACK');
-      return false;
+      return { ok: false };
     }
 
     // Получаем текущую реакцию пользователя (если есть)
@@ -237,33 +253,47 @@ export async function togglePostReaction(postId: number, maxUserId: number, emoj
     );
     const existingEmoji: string | undefined = existingRes.rows[0]?.emoji;
 
-    // Удаляем предыдущую реакцию и декрементируем её счётчик
+    // Удаляем предыдущую реакцию и декрементируем её счётчик.
+    // Проверяем rowCount DELETE — при дублирующемся webhook строка уже удалена
+    // параллельной транзакцией, декрементировать повторно нельзя.
     if (existingEmoji) {
-      await client.query(
+      const deleteRes = await client.query(
         'DELETE FROM post_user_reactions WHERE post_id = $1 AND max_user_id = $2',
         [postId, maxUserId]
       );
-      await client.query(
-        'UPDATE post_reaction_counts SET count = GREATEST(0, count - 1) WHERE post_id = $1 AND emoji = $2',
-        [postId, existingEmoji]
-      );
+      if (deleteRes.rowCount && deleteRes.rowCount > 0) {
+        await client.query(
+          'UPDATE post_reaction_counts SET count = GREATEST(0, count - 1) WHERE post_id = $1 AND emoji = $2',
+          [postId, existingEmoji]
+        );
+      }
     }
 
     if (existingEmoji !== emoji) {
-      // Новый эмодзи (не тот же что был) — добавляем
-      await client.query(
-        'INSERT INTO post_user_reactions (post_id, max_user_id, emoji) VALUES ($1, $2, $3)',
+      // Новый эмодзи (не тот же что был) — добавляем.
+      // ON CONFLICT DO NOTHING: защита от race condition при дублирующихся webhook'ах MAX.
+      // Если параллельная транзакция уже вставила эту реакцию — просто пропускаем.
+      const insertRes = await client.query(
+        `INSERT INTO post_user_reactions (post_id, max_user_id, emoji) VALUES ($1, $2, $3)
+         ON CONFLICT (post_id, max_user_id, emoji) DO NOTHING`,
         [postId, maxUserId, emoji]
       );
-      await client.query(
-        'UPDATE post_reaction_counts SET count = count + 1 WHERE post_id = $1 AND emoji = $2',
-        [postId, emoji]
-      );
+      // rowCount = 0 означает конфликт — дубликат, не инкрементируем счётчик
+      if (insertRes.rowCount && insertRes.rowCount > 0) {
+        await client.query(
+          'UPDATE post_reaction_counts SET count = count + 1 WHERE post_id = $1 AND emoji = $2',
+          [postId, emoji]
+        );
+      }
     }
     // Если тот же эмодзи — просто удалили (toggle off)
 
     await client.query('COMMIT');
-    return true;
+
+    if (existingEmoji === emoji) {
+      return { ok: true, action: 'removed', emoji };
+    }
+    return { ok: true, action: 'set', emoji, prev: existingEmoji ?? null };
   } catch (err) {
     // Оборачиваем ROLLBACK в try/catch — иначе ошибка ROLLBACK затрёт оригинальную
     try { await client.query('ROLLBACK'); } catch { /* игнорируем */ }
@@ -279,7 +309,7 @@ export async function togglePostReaction(postId: number, maxUserId: number, emoj
 export interface PostWithNewComments {
   post_id: number;
   text_preview: string | null;
-  owner_max_user_id: number;
+  owner_max_user_id: string; // BIGINT из PostgreSQL — храним как string во избежание потери точности
   new_comment_count: number;
   new_comments: Array<{ text: string; author_name: string }>;
 }
@@ -304,15 +334,18 @@ export async function getPostsWithNewComments(): Promise<PostWithNewComments[]> 
      JOIN users au    ON au.id = c.author_id
      WHERE ch.is_active = true
        AND ch.notifications_enabled = true
+       AND u.plan = 'pro'
+       AND (u.plan_expires IS NULL OR u.plan_expires > NOW())
        AND c.is_hidden = false
        AND c.created_at > COALESCE(p.last_notified_at, '1970-01-01'::timestamptz)
      GROUP BY p.id, p.text_preview, u.max_user_id`
   );
-  // BIGINT из pg приходит как строка — нормализуем явно
+  // BIGINT из pg приходит как строка — post_id нормализуем в number (в safe integer диапазоне),
+  // owner_max_user_id оставляем строкой — MAX user ID может превышать 2^53
   return result.rows.map(row => ({
     ...row,
     post_id: Number(row.post_id),
-    owner_max_user_id: Number(row.owner_max_user_id),
+    owner_max_user_id: String(row.owner_max_user_id),
   }));
 }
 
@@ -333,10 +366,149 @@ export async function getPostReactions(postId: number): Promise<Array<{ emoji: s
   return result.rows;
 }
 
+// ─── ОПРОСЫ ──────────────────────────────────────────────────────
+
+// Создать опрос для поста. Возвращает null при конфликте (опрос уже есть)
+export async function createPoll(
+  postId: number,
+  question: string,
+  options: string[]
+): Promise<{ id: number } | null> {
+  const optionsJson = JSON.stringify(options.map(text => ({ text })));
+  const result = await pool.query<{ id: string }>(
+    `INSERT INTO post_polls (post_id, question, options_json)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (post_id) DO NOTHING
+     RETURNING id`,
+    [postId, question, optionsJson]
+  );
+  if (!result.rows[0]) return null;
+  return { id: Number(result.rows[0].id) };
+}
+
+// Данные опроса со счётчиками голосов — для построения кнопок после голосования
+export interface PollState {
+  poll_id: number;
+  question: string;
+  options: string[];     // тексты вариантов по порядку
+  counts: number[];      // счётчики в том же порядке
+}
+
+// Получить опрос с актуальными счётчиками голосов
+export async function getPollWithCounts(postId: number): Promise<PollState | null> {
+  const result = await pool.query<{
+    poll_id: string;
+    question: string;
+    options_json: Array<{ text: string }>;
+    vote_counts: Array<{ option_idx: number; count: number }> | null;
+  }>(
+    `SELECT
+       pp.id AS poll_id,
+       pp.question,
+       pp.options_json,
+       COALESCE(
+         json_agg(json_build_object('option_idx', pv.option_idx, 'count', pv.cnt))
+           FILTER (WHERE pv.option_idx IS NOT NULL),
+         '[]'
+       ) AS vote_counts
+     FROM post_polls pp
+     LEFT JOIN (
+       SELECT poll_id, option_idx, COUNT(*)::int AS cnt
+       FROM poll_votes
+       GROUP BY poll_id, option_idx
+     ) pv ON pv.poll_id = pp.id
+     WHERE pp.post_id = $1
+     GROUP BY pp.id`,
+    [postId]
+  );
+
+  if (!result.rows[0]) return null;
+  const row = result.rows[0];
+
+  const options = (row.options_json as Array<{ text: string }>).map(o => o.text);
+  const counts = new Array<number>(options.length).fill(0);
+  for (const vc of (row.vote_counts ?? [])) {
+    if (vc.option_idx >= 0 && vc.option_idx < counts.length) {
+      counts[vc.option_idx] = vc.count;
+    }
+  }
+
+  return {
+    poll_id: Number(row.poll_id),
+    question: row.question,
+    options,
+    counts,
+  };
+}
+
+// Toggle голоса: один пользователь — один голос на опрос.
+// - Нажал тот же вариант → снимает голос (toggle off)
+// - Нажал другой вариант → перемещает голос
+// - Нажал новый при пустом выборе → ставит голос
+export async function togglePollVote(
+  pollId: number,
+  userMaxId: number | bigint,
+  optionIdx: number
+): Promise<{ action: 'set' | 'removed'; optionIdx: number }> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Текущий голос пользователя
+    const existing = await client.query<{ option_idx: number }>(
+      'SELECT option_idx FROM poll_votes WHERE poll_id = $1 AND user_max_id = $2',
+      [pollId, String(userMaxId)]
+    );
+    const currentIdx: number | undefined = existing.rows[0]?.option_idx;
+
+    if (currentIdx !== undefined) {
+      // Удаляем текущий голос (проверяем rowCount — защита от параллельных вызовов)
+      await client.query(
+        'DELETE FROM poll_votes WHERE poll_id = $1 AND user_max_id = $2',
+        [pollId, String(userMaxId)]
+      );
+    }
+
+    if (currentIdx !== optionIdx) {
+      // Другой вариант или голоса не было — ставим новый.
+      // ON CONFLICT DO NOTHING: защита от дублирующегося webhook
+      await client.query(
+        `INSERT INTO poll_votes (poll_id, user_max_id, option_idx)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (poll_id, user_max_id) DO NOTHING`,
+        [pollId, String(userMaxId), optionIdx]
+      );
+    }
+
+    await client.query('COMMIT');
+
+    if (currentIdx === optionIdx) {
+      return { action: 'removed', optionIdx };
+    }
+    return { action: 'set', optionIdx };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* игнорируем */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Получить poll_id по postId (нужно в onCallback для togglePollVote)
+export async function getPollIdByPostId(postId: number): Promise<number | null> {
+  const result = await pool.query<{ id: string }>(
+    'SELECT id FROM post_polls WHERE post_id = $1',
+    [postId]
+  );
+  if (!result.rows[0]) return null;
+  return Number(result.rows[0].id);
+}
+
 // ─── БАТЧ-ОПЕРАЦИИ ДЛЯ updateCounters ────────────────────────────
 
 // Считает видимые комментарии для всех постов одним запросом вместо N отдельных
-export async function getBatchCommentCounts(postIds: number[]): Promise<Map<number, number>> {
+// Map-ключи — строки: BIGINT из PG не теряет точность при String() (безопасно для ID > 2^53)
+export async function getBatchCommentCounts(postIds: (number | string)[]): Promise<Map<string, number>> {
   if (postIds.length === 0) return new Map();
   const result = await pool.query<{ post_id: string; count: string }>(
     `SELECT post_id, COUNT(*)::int AS count
@@ -345,17 +517,17 @@ export async function getBatchCommentCounts(postIds: number[]): Promise<Map<numb
      GROUP BY post_id`,
     [postIds]
   );
-  const map = new Map<number, number>();
+  const map = new Map<string, number>();
   // Инициализируем нулями — посты без комментариев не попадут в GROUP BY
-  for (const id of postIds) map.set(id, 0);
-  for (const row of result.rows) map.set(Number(row.post_id), Number(row.count));
+  for (const id of postIds) map.set(String(id), 0);
+  for (const row of result.rows) map.set(String(row.post_id), Number(row.count));
   return map;
 }
 
 // Читает реакции из post_reaction_counts для всех постов одним запросом вместо N отдельных
 export async function getBatchPostReactions(
-  postIds: number[]
-): Promise<Map<number, Array<{ emoji: string; count: number }>>> {
+  postIds: (number | string)[]
+): Promise<Map<string, Array<{ emoji: string; count: number }>>> {
   if (postIds.length === 0) return new Map();
   const result = await pool.query<{ post_id: string; emoji: string; count: string }>(
     `SELECT post_id, emoji, count
@@ -363,9 +535,9 @@ export async function getBatchPostReactions(
      WHERE post_id = ANY($1::bigint[])`,
     [postIds]
   );
-  const map = new Map<number, Array<{ emoji: string; count: number }>>();
+  const map = new Map<string, Array<{ emoji: string; count: number }>>();
   for (const row of result.rows) {
-    const id = Number(row.post_id);
+    const id = String(row.post_id);
     if (!map.has(id)) map.set(id, []);
     map.get(id)!.push({ emoji: row.emoji, count: Number(row.count) });
   }

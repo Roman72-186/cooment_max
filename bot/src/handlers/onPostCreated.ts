@@ -10,6 +10,12 @@ import * as db from '../db/db.js';
 import { logger } from '../utils/logger.js';
 import type { WebhookUpdate, Channel } from '../../../shared/types.js';
 
+function isActivePro(user: { plan?: string | null; plan_expires?: string | Date | null }): boolean {
+  if (user.plan !== 'pro') return false;
+  if (!user.plan_expires) return true;
+  return new Date(user.plan_expires) > new Date();
+}
+
 export async function onPostCreated(update: WebhookUpdate): Promise<void> {
   const message = update.message;
   if (!message) return;
@@ -40,16 +46,32 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
       return;
     }
 
-    // Проверяем: если и комментарии и реакции выключены — нечего добавлять
-    const reactions: string[] = channel.post_reactions ?? [];
-    if (!channel.comments_enabled && reactions.length === 0) {
-      logger.debug('Комментарии и реакции отключены, пропускаем', { chatId });
+    // Снапшот опроса из настроек канала на момент создания поста
+    const ownerPlanKnown =
+      (channel as any).owner_plan !== undefined ||
+      (channel as any).owner_plan_expires !== undefined;
+    const channelHasPro = ownerPlanKnown
+      ? isActivePro({
+          plan: (channel as any).owner_plan,
+          plan_expires: (channel as any).owner_plan_expires,
+        })
+      : true;
+    const channelPollEnabled = channelHasPro && ((channel as any).poll_enabled ?? false);
+    const channelPollQuestion: string | null = (channel as any).poll_question ?? null;
+    const channelPollOptions: Array<{ text: string }> | null = (channel as any).poll_options ?? null;
+    const hasPollTemplate = channelPollEnabled && channelPollQuestion && channelPollOptions && channelPollOptions.length >= 2;
+
+    // Проверяем: если и комментарии, и реакции, и опрос выключены — нечего добавлять
+    const reactions: string[] = channelHasPro ? (channel.post_reactions ?? []) : [];
+    if (!channel.comments_enabled && reactions.length === 0 && !hasPollTemplate) {
+      logger.debug('Комментарии, реакции и опрос отключены, пропускаем', { chatId });
       return;
     }
 
     // 2. Сохранить пост в БД (полный текст + медиа-вложения для корректного обновления кнопки)
-    const originalAttachments = (message.body.attachments ?? []) as Record<string, unknown>[];
+    const originalAttachments = (message.body.attachments ?? []) as unknown as Record<string, unknown>[];
     const mediaAttachments = originalAttachments.filter(a => a?.type !== 'inline_keyboard');
+
     const post = await db.createPost({
       channel_id: channel.id,
       max_message_id: messageId,
@@ -57,6 +79,8 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
       attachments_json: mediaAttachments, // медиа-вложения сохраняем отдельно
       comments_enabled: channel.comments_enabled, // фиксируем на момент создания
       post_reactions: reactions,          // фиксируем на момент создания — изменение настройки не трогает старые посты
+      poll_question: hasPollTemplate ? channelPollQuestion : null,
+      poll_options: hasPollTemplate ? channelPollOptions : null,
     });
 
     if (!post) {
@@ -69,9 +93,34 @@ export async function onPostCreated(update: WebhookUpdate): Promise<void> {
       await db.initPostReactions(post.id, reactions);
     }
 
-    // 3. Прикрепить клавиатуру к оригинальному посту
+    // 3. Создать опрос в БД из настроек канала (если включён)
+    let pollButtons: unknown[][] = [];
+    if (hasPollTemplate) {
+      const options = channelPollOptions!.map(o => o.text);
+      const poll = await db.createPoll(post.id, channelPollQuestion!, options);
+      if (poll) {
+        const zeroCounts = options.map(() => 0);
+        pollButtons = maxClient.buildPollButtons(post.id, options, zeroCounts, undefined, channelPollQuestion ?? undefined);
+        logger.info('Опрос из настроек канала создан для поста', {
+          postId: post.id,
+          pollId: poll.id,
+          question: channelPollQuestion,
+          optionsCount: options.length,
+        });
+      }
+    }
+
+    // 4. Прикрепить клавиатуру к оригинальному посту
+    // Порядок рядов: [Comments] → [варианты опроса] → [реакции]
     const reactionButtons = reactions.map(e => ({ emoji: e, count: 0 }));
-    const keyboard = maxClient.buildPostKeyboard(post.id, 0, reactionButtons, channel.comments_enabled);
+    const keyboard = maxClient.buildPostKeyboard(
+      post.id,
+      0,
+      reactionButtons,
+      channel.comments_enabled,
+      undefined,
+      pollButtons,
+    );
     const keyboardAttachments = keyboard ? [keyboard] : [];
 
     logger.info('Прикрепляем кнопку к посту', {
@@ -155,7 +204,7 @@ async function autoRegisterChannel(chatId: string | number): Promise<Channel | n
     );
 
     logger.info('Канал авторегистрирован', { chatId, title, ownerId, channelId: result.rows[0]?.id });
-    return result.rows[0] ?? null;
+    return await db.getChannelByMaxChatId(String(chatId));
   } catch (err) {
     logger.error('Ошибка авторегистрации канала', {
       chatId,

@@ -3,6 +3,8 @@
 //   POST /api/admin/set-admin    — назначить суперадмина (X-Admin-Secret)
 //   GET  /api/admin/users        — список всех пользователей (Mini App, is_admin)
 //   GET  /api/admin/channels     — список всех каналов (Mini App, is_admin)
+//   GET  /api/admin/referrals    — статистика и баланс реферальной программы
+//   POST /api/admin/referrals/:id/adjust — ручное начисление/списание баллов
 //   PATCH /api/admin/users/:id   — изменить план / снять PRO (Mini App, is_admin)
 //   DELETE /api/admin/users/:id  — удалить пользователя (Mini App, is_admin)
 //   PATCH /api/admin/channels/:id — активировать/деактивировать канал (Mini App, is_admin)
@@ -15,6 +17,22 @@ import { requireAuth } from '../middleware/auth.js';
 export const adminRouter = Router();
 
 const TRIAL_DAYS_DEFAULT = 30;
+
+function getReferralCommissionPercent(paidReferralsCount: number): number {
+  if (paidReferralsCount <= 5) return 10;
+  if (paidReferralsCount <= 10) return 13;
+  if (paidReferralsCount <= 20) return 15;
+  return 20;
+}
+
+function roundRub(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function buildMaxChannelUrl(chatId: string | null): string | null {
+  if (!chatId) return null;
+  return `https://max.ru/id${encodeURIComponent(chatId)}`;
+}
 
 // ─── Middleware: проверка is_admin по initData ──────────────────────────────
 
@@ -97,7 +115,9 @@ adminRouter.post('/set-admin', async (req, res) => {
 
 // ─── GET /api/admin/users ────────────────────────────────────────────────────
 
-adminRouter.get('/users', requireAuth, requireAdminUser, async (_req, res) => {
+adminRouter.get('/users', requireAuth, requireAdminUser, async (req, res) => {
+  const limit  = Math.min(parseInt(String(req.query.limit  ?? 50),  10) || 50,  200);
+  const offset = Math.max(parseInt(String(req.query.offset ?? 0),   10) || 0,   0);
   try {
     const { rows } = await pool.query(`
       SELECT
@@ -108,8 +128,9 @@ adminRouter.get('/users', requireAuth, requireAdminUser, async (_req, res) => {
       LEFT JOIN channels c ON c.owner_id = u.id
       GROUP BY u.id
       ORDER BY u.created_at DESC
-    `);
-    res.json(rows.map(r => ({ ...r, id: Number(r.id), max_user_id: Number(r.max_user_id) })));
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
+    res.json(rows.map(r => ({ ...r, id: Number(r.id), max_user_id: String(r.max_user_id) })));
   } catch (err) {
     console.error('GET /api/admin/users error:', err);
     res.status(500).json({ error: 'Ошибка сервера' });
@@ -118,18 +139,26 @@ adminRouter.get('/users', requireAuth, requireAdminUser, async (_req, res) => {
 
 // ─── GET /api/admin/channels ─────────────────────────────────────────────────
 
-adminRouter.get('/channels', requireAuth, requireAdminUser, async (_req, res) => {
+adminRouter.get('/channels', requireAuth, requireAdminUser, async (req, res) => {
+  const limit  = Math.min(parseInt(String(req.query.limit  ?? 50),  10) || 50,  200);
+  const offset = Math.max(parseInt(String(req.query.offset ?? 0),   10) || 0,   0);
   try {
     const { rows } = await pool.query(`
       SELECT
         c.id, c.max_chat_id, c.channel_name, c.is_active,
         c.post_count, c.total_comments, c.comments_enabled, c.connected_at,
-        u.name AS owner_name, u.max_user_id AS owner_max_id
+        u.name AS owner_name, u.max_user_id AS owner_max_id,
+        u.created_at AS owner_created_at
       FROM channels c
       LEFT JOIN users u ON u.id = c.owner_id
       ORDER BY c.connected_at DESC
-    `);
-    res.json(rows.map(r => ({ ...r, id: Number(r.id) })));
+      LIMIT $1 OFFSET $2
+    `, [limit, offset]);
+    res.json(rows.map(r => ({
+      ...r,
+      id: Number(r.id),
+      channel_url: buildMaxChannelUrl(r.max_chat_id),
+    })));
   } catch (err) {
     console.error('GET /api/admin/channels error:', err);
     res.status(500).json({ error: 'Ошибка сервера' });
@@ -317,11 +346,215 @@ adminRouter.get('/payments', requireAuth, requireAdminUser, async (_req, res) =>
   }
 });
 
+// ─── GET /api/admin/referrals ────────────────────────────────────────────────
+
+adminRouter.get('/referrals', requireAuth, requireAdminUser, async (_req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      WITH invited AS (
+        SELECT referred_by AS referrer_id, COUNT(*)::int AS invited
+        FROM users
+        WHERE referred_by IS NOT NULL
+        GROUP BY referred_by
+      ),
+      converted AS (
+        SELECT u.referred_by AS referrer_id, COUNT(DISTINCT u.id)::int AS converted
+        FROM users u
+        JOIN payments p ON p.user_id = u.id
+        WHERE u.referred_by IS NOT NULL AND p.status = 'succeeded'
+        GROUP BY u.referred_by
+      ),
+      rewards AS (
+        SELECT
+          referrer_id,
+          COALESCE(SUM(reward_days), 0)::int AS days_earned,
+          COALESCE(SUM(commission_amount_rub), 0)::numeric(10,2) AS commission_earned_rub
+        FROM referral_rewards
+        WHERE status IN ('approved', 'paid')
+        GROUP BY referrer_id
+      ),
+      adjustments AS (
+        SELECT
+          referrer_id,
+          COALESCE(SUM(amount_rub), 0)::numeric(10,2) AS manual_adjustments_rub
+        FROM referral_balance_adjustments
+        GROUP BY referrer_id
+      )
+      SELECT
+        u.id,
+        u.max_user_id,
+        u.name,
+        u.username,
+        u.ref_code,
+        COALESCE(i.invited, 0)::int AS invited,
+        COALESCE(c.converted, 0)::int AS converted,
+        COALESCE(r.days_earned, 0)::int AS days_earned,
+        COALESCE(r.commission_earned_rub, 0)::numeric(10,2) AS commission_earned_rub,
+        COALESCE(a.manual_adjustments_rub, 0)::numeric(10,2) AS manual_adjustments_rub,
+        (COALESCE(r.commission_earned_rub, 0) + COALESCE(a.manual_adjustments_rub, 0))::numeric(10,2) AS balance_rub
+      FROM users u
+      LEFT JOIN invited i ON i.referrer_id = u.id
+      LEFT JOIN converted c ON c.referrer_id = u.id
+      LEFT JOIN rewards r ON r.referrer_id = u.id
+      LEFT JOIN adjustments a ON a.referrer_id = u.id
+      WHERE
+        COALESCE(i.invited, 0) > 0
+        OR COALESCE(c.converted, 0) > 0
+        OR COALESCE(r.commission_earned_rub, 0) <> 0
+        OR COALESCE(a.manual_adjustments_rub, 0) <> 0
+      ORDER BY balance_rub DESC, converted DESC, invited DESC
+      LIMIT 200
+    `);
+
+    const referrers = rows.map((r) => {
+      const converted = Number(r.converted ?? 0);
+      return {
+        id: Number(r.id),
+        max_user_id: Number(r.max_user_id),
+        name: r.name,
+        username: r.username,
+        ref_code: r.ref_code,
+        invited: Number(r.invited ?? 0),
+        converted,
+        days_earned: Number(r.days_earned ?? 0),
+        commission_earned_rub: Number(r.commission_earned_rub ?? 0),
+        manual_adjustments_rub: Number(r.manual_adjustments_rub ?? 0),
+        balance_rub: Number(r.balance_rub ?? 0),
+        current_rate_percent: getReferralCommissionPercent(converted),
+      };
+    });
+
+    const { rows: adjustmentRows } = await pool.query(`
+      SELECT
+        a.id,
+        a.referrer_id,
+        a.amount_rub,
+        a.reason,
+        a.created_at,
+        ref.name AS referrer_name,
+        ref.max_user_id AS referrer_max_user_id,
+        admin.name AS admin_name,
+        admin.max_user_id AS admin_max_user_id
+      FROM referral_balance_adjustments a
+      JOIN users ref ON ref.id = a.referrer_id
+      LEFT JOIN users admin ON admin.id = a.admin_user_id
+      ORDER BY a.created_at DESC
+      LIMIT 50
+    `);
+
+    const summary = referrers.reduce(
+      (acc, r) => ({
+        invited: acc.invited + r.invited,
+        converted: acc.converted + r.converted,
+        days_earned: acc.days_earned + r.days_earned,
+        commission_earned_rub: roundRub(acc.commission_earned_rub + r.commission_earned_rub),
+        manual_adjustments_rub: roundRub(acc.manual_adjustments_rub + r.manual_adjustments_rub),
+        balance_rub: roundRub(acc.balance_rub + r.balance_rub),
+      }),
+      {
+        invited: 0,
+        converted: 0,
+        days_earned: 0,
+        commission_earned_rub: 0,
+        manual_adjustments_rub: 0,
+        balance_rub: 0,
+      }
+    );
+
+    res.json({
+      summary,
+      referrers,
+      adjustments: adjustmentRows.map((a) => ({
+        id: Number(a.id),
+        referrer_id: Number(a.referrer_id),
+        referrer_name: a.referrer_name,
+        referrer_max_user_id: Number(a.referrer_max_user_id),
+        admin_name: a.admin_name,
+        admin_max_user_id: a.admin_max_user_id ? Number(a.admin_max_user_id) : null,
+        amount_rub: Number(a.amount_rub),
+        reason: a.reason,
+        created_at: a.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error('GET /api/admin/referrals error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ─── POST /api/admin/referrals/:id/adjust ───────────────────────────────────
+
+adminRouter.post('/referrals/:id/adjust', requireAuth, requireAdminUser, async (req, res) => {
+  const referrerId = Number(req.params.id);
+  const { amount_rub, reason } = req.body as { amount_rub?: number; reason?: string };
+
+  if (!Number.isInteger(referrerId) || referrerId < 1) {
+    res.status(400).json({ error: 'Некорректный referrer id' });
+    return;
+  }
+
+  if (typeof amount_rub !== 'number' || !Number.isFinite(amount_rub)) {
+    res.status(400).json({ error: 'amount_rub должен быть числом' });
+    return;
+  }
+
+  const amountRub = roundRub(amount_rub);
+  if (amountRub === 0 || Math.abs(amountRub) > 1_000_000) {
+    res.status(400).json({ error: 'Сумма должна быть от -1 000 000 до 1 000 000 и не равна нулю' });
+    return;
+  }
+
+  const normalizedReason = typeof reason === 'string' ? reason.trim() : '';
+  if (!normalizedReason || normalizedReason.length > 300) {
+    res.status(400).json({ error: 'Укажи причину до 300 символов' });
+    return;
+  }
+
+  try {
+    const { rows: referrerRows } = await pool.query(
+      'SELECT id FROM users WHERE id = $1',
+      [referrerId]
+    );
+    if (!referrerRows[0]) { res.status(404).json({ error: 'Реферер не найден' }); return; }
+
+    const { rows: adminRows } = await pool.query(
+      'SELECT id FROM users WHERE max_user_id = $1',
+      [req.maxUser!.user_id]
+    );
+    const adminUserId = adminRows[0]?.id ?? null;
+
+    const { rows } = await pool.query(
+      `INSERT INTO referral_balance_adjustments (referrer_id, admin_user_id, amount_rub, reason)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, referrer_id, amount_rub, reason, created_at`,
+      [referrerId, adminUserId, amountRub, normalizedReason]
+    );
+
+    res.status(201).json({
+      ok: true,
+      adjustment: {
+        ...rows[0],
+        id: Number(rows[0].id),
+        referrer_id: Number(rows[0].referrer_id),
+        amount_rub: Number(rows[0].amount_rub),
+      },
+    });
+  } catch (err) {
+    console.error('POST /api/admin/referrals/:id/adjust error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
 // ─── GET /api/admin/promo-codes ───────────────────────────────────────────────
 
-adminRouter.get('/promo-codes', requireAuth, requireAdminUser, async (_req, res) => {
+adminRouter.get('/promo-codes', requireAuth, requireAdminUser, async (req, res) => {
+  const limit  = Math.min(parseInt(String(req.query.limit  ?? 100), 10) || 100, 500);
+  const offset = Math.max(parseInt(String(req.query.offset ?? 0),   10) || 0,   0);
   try {
-    const { rows } = await pool.query('SELECT * FROM promo_codes ORDER BY created_at DESC');
+    const { rows } = await pool.query(
+      'SELECT * FROM promo_codes ORDER BY created_at DESC LIMIT $1 OFFSET $2',
+      [limit, offset]
+    );
     res.json(rows.map(r => ({ ...r, id: Number(r.id) })));
   } catch (err) {
     console.error('GET /api/admin/promo-codes error:', err);

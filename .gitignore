@@ -28,3 +28,17 @@ Thumbs.db
 # Кэш Vite
 .vite/
 miniapp/.vite/
+
+# Одноразовые скрипты деплоя и e2e (создаются под задачу, не версионируются)
+/deploy_*.py
+/e2e_*.js
+/e2e_*.py
+
+# Легаси-папка scratch-спек (новые спеки → specs/)
+/spec/
+
+# Скретч-файлы в корне (скриншоты, ad-hoc заметки)
+# Корневые .md-доки (CLAUDE.md, AGENTS.md, MAX_*.md, DYNAMIC_PRICING.md) версионируются — их НЕ игнорируем
+/image*.png
+/photo_*.jpg
+/photo_*.jpeg

@@ -1,6 +1,15 @@
 // Глобальное состояние приложения (Zustand)
 import { create } from 'zustand';
 import type { Comment, UserMe, ChannelSummary } from '../api/backend';
+import type { Toast } from '../components/Toast';
+
+// Диалог подтверждения
+export interface ConfirmRequest {
+  message: string;
+  confirmLabel?: string;
+  variant?: 'danger' | 'default';
+  onConfirm: () => void;
+}
 
 // Страницы приложения
 export type Page =
@@ -9,6 +18,7 @@ export type Page =
   | { id: 'comments'; postId: number; highlightCommentId?: number }
   | { id: 'onboarding' }
   | { id: 'dashboard' }
+  | { id: 'referrals' }
   | { id: 'analytics'; channelId: number }
   | { id: 'settings'; channelId: number }
   | { id: 'pricing' }
@@ -37,6 +47,16 @@ interface AppState {
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   setReplyTo: (comment: Comment | null) => void;
+
+  // Toast уведомления
+  toasts: Toast[];
+  addToast: (toast: Omit<Toast, 'id'>) => void;
+  removeToast: (id: string) => void;
+
+  // Диалог подтверждения
+  confirmRequest: ConfirmRequest | null;
+  requestConfirm: (req: ConfirmRequest) => void;
+  resolveConfirm: () => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -77,4 +97,17 @@ export const useAppStore = create<AppState>((set) => ({
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
   setReplyTo: (replyTo) => set({ replyTo }),
+
+  // Toast уведомления
+  toasts: [],
+  addToast: (toast) => {
+    const id = crypto.randomUUID();
+    set((s) => ({ toasts: [...s.toasts.slice(-2), { ...toast, id }] })); // max 3
+  },
+  removeToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
+
+  // Диалог подтверждения
+  confirmRequest: null,
+  requestConfirm: (req) => set({ confirmRequest: req }),
+  resolveConfirm: () => set({ confirmRequest: null }),
 }));

@@ -63,7 +63,13 @@ describe('onBotAdded', () => {
     });
     vi.mocked(maxClient.createChat).mockResolvedValue({ chat_id: 'disc_456' });
     vi.mocked(maxClient.sendMessageToUser).mockResolvedValue(undefined as any);
-    vi.mocked(db.upsertUser).mockResolvedValue({ id: 1, max_user_id: 200, name: 'Bob' } as any);
+    vi.mocked(db.upsertUser).mockResolvedValue({
+      id: 1,
+      max_user_id: 200,
+      name: 'Bob',
+      plan: 'pro',
+      plan_expires: null,
+    } as any);
     vi.mocked(db.upsertChannel).mockResolvedValue({ id: 1 } as any);
     vi.mocked(db.getChannelByMaxChatId).mockResolvedValue(null); // новый канал по умолчанию
     vi.mocked(db.pool.query).mockResolvedValue({ rows: [] } as any);
@@ -157,6 +163,50 @@ describe('onBotAdded', () => {
       expect.objectContaining({ channel_name: null })
     );
     expect(maxClient.createChat).not.toHaveBeenCalled();
+  });
+
+  it('регистрирует первый канал без активного PRO у владельца', async () => {
+    vi.mocked(db.upsertUser).mockResolvedValue({
+      id: 1,
+      max_user_id: 200,
+      name: 'Bob',
+      plan: 'free',
+      plan_expires: null,
+    } as any);
+    vi.mocked(db.pool.query).mockResolvedValue({ rows: [{ count: 0 }] } as any);
+
+    await onBotAdded(makeUpdate() as any);
+
+    expect(db.upsertChannel).toHaveBeenCalled();
+    expect(maxClient.sendMessageToUser).toHaveBeenCalledWith(
+      200,
+      expect.stringContaining('Канал'),
+      expect.anything()
+    );
+  });
+
+  it('не регистрирует второй канал без активного PRO у владельца', async () => {
+    vi.mocked(db.upsertUser).mockResolvedValue({
+      id: 1,
+      max_user_id: 200,
+      name: 'Bob',
+      plan: 'free',
+      plan_expires: null,
+    } as any);
+    vi.mocked(db.pool.query).mockResolvedValueOnce({ rows: [{ count: 1 }] } as any);
+
+    await onBotAdded(makeUpdate() as any);
+
+    expect(db.upsertChannel).not.toHaveBeenCalled();
+    expect(db.pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining('is_active = true'),
+      expect.anything()
+    );
+    expect(maxClient.sendMessageToUser).toHaveBeenCalledWith(
+      200,
+      expect.stringContaining('Для подключения 2 и более каналов нужен активный тариф PRO'),
+      expect.anything()
+    );
   });
 
   // ─── Реактивация существующего канала ───────────────────────

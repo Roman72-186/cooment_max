@@ -4,6 +4,7 @@
 import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
 import { withRetry } from '../utils/retry.js';
+import { fetchWithTimeout } from '../utils/fetchWithTimeout.js';
 import type { MaxBotInfo, MaxSendMessageResult, UpdateType, WebhookUpdate } from '../../../shared/types.js';
 
 // Базовый URL MAX API
@@ -21,10 +22,11 @@ async function request<T>(
     'Content-Type': 'application/json',
   };
 
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    timeoutMs: 7000,
   });
 
   if (!response.ok) {
@@ -48,9 +50,14 @@ export async function getMe(): Promise<MaxBotInfo> {
 
 export async function registerWebhook(
   url: string,
-  updateTypes: UpdateType[]
+  updateTypes: UpdateType[],
+  secret?: string
 ): Promise<void> {
-  await request('POST', '/subscriptions', { url, update_types: updateTypes });
+  await request('POST', '/subscriptions', {
+    url,
+    update_types: updateTypes,
+    ...(secret ? { secret } : {}),
+  });
   logger.info('Webhook зарегистрирован', { url });
 }
 
@@ -88,8 +95,10 @@ export async function sendMessage(
 }
 
 // Отправить сообщение пользователю напрямую (user_id — query param согласно MAX API)
+// userId принимает string или number: BIGINT из PostgreSQL лучше передавать как string
+// чтобы избежать потери точности при ID > 2^53 (Number.MAX_SAFE_INTEGER)
 export async function sendMessageToUser(
-  userId: number,
+  userId: number | string,
   text: string,
   attachments?: unknown[]
 ): Promise<MaxSendMessageResult> {
@@ -171,12 +180,15 @@ export async function answerCallback(callbackId: string, text?: string): Promise
 // ─── ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ─────────────────────────────────────
 
 // Собрать inline-клавиатуру с кнопкой комментариев и/или кнопками реакций.
+// selectedEmoji — emoji текущего пользователя (для оптимистичного подсвечивания).
 // Возвращает null если обе функции выключены — тогда attachments без keyboard.
 export function buildPostKeyboard(
   postId: number,
   commentCount: number,
   reactions: Array<{ emoji: string; count: number }> = [],
-  commentsEnabled: boolean = true
+  commentsEnabled: boolean = true,
+  selectedEmoji?: string,
+  pollRows: unknown[][] = [],
 ): unknown | null {
   const buttons: unknown[][] = [];
 
@@ -190,11 +202,19 @@ export function buildPostKeyboard(
     }]);
   }
 
-  // Ряд 2: кнопки реакций (если есть)
+  // Ряды вариантов опроса (если есть) — каждый вариант на отдельном ряду
+  for (const row of pollRows) {
+    buttons.push(row as unknown[]);
+  }
+
+  // Последний ряд: кнопки реакций (если есть)
+  // Выбранная реакция выделяется маркером «·» перед emoji
   if (reactions.length > 0) {
     buttons.push(reactions.map(r => ({
       type: 'callback',
-      text: `${r.emoji} ${r.count}`,
+      text: selectedEmoji === r.emoji
+        ? `✅ ${r.emoji} ${r.count}`
+        : `${r.emoji} ${r.count}`,
       payload: `react_${postId}_${r.emoji}`,
     })));
   }
@@ -203,6 +223,43 @@ export function buildPostKeyboard(
   if (buttons.length === 0) return null;
 
   return { type: 'inline_keyboard', payload: { buttons } };
+}
+
+// Построить ряды кнопок вариантов опроса.
+// Первый ряд — кнопка-шапка с вопросом (❓), нажатие — no-op.
+// Каждый вариант — отдельный ряд с прогресс-баром и процентом.
+// votedIdx — индекс варианта текущего пользователя (для подсветки ✅).
+export function buildPollButtons(
+  postId: number,
+  options: string[],
+  counts: number[],
+  votedIdx?: number,
+  question?: string,
+): unknown[][] {
+  const rows: unknown[][] = [];
+
+  if (question) {
+    const q = question.length > 40 ? question.slice(0, 39) + '…' : question;
+    rows.push([{ type: 'callback', text: `❓ ${q}`, payload: `poll_info_${postId}` }]);
+  }
+
+  const total = counts.reduce((s, c) => s + c, 0);
+
+  options.forEach((text, idx) => {
+    const truncated = text.length > 22 ? text.slice(0, 21) + '…' : text;
+    const count = counts[idx] ?? 0;
+    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+    const filled = Math.round(pct * 5 / 100);
+    const bar = '█'.repeat(filled) + '░'.repeat(5 - filled);
+    const prefix = votedIdx === idx ? '✅ ' : '   ';
+    rows.push([{
+      type: 'callback',
+      text: `${prefix}${truncated}  ${bar}  ${pct}%`,
+      payload: `poll_${postId}_${idx}`,
+    }]);
+  });
+
+  return rows;
 }
 
 // Алиас для обратной совместимости

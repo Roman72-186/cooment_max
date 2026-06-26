@@ -25,6 +25,23 @@ export interface EmojiReaction {
   reacted_by_me: boolean;
 }
 
+export type CommentAttachment =
+  | {
+      type: 'image';
+      url: string;
+      width?: number;
+      height?: number;
+      mime_type?: string;
+      filename?: string;
+      size?: number;
+    }
+  | {
+      type: 'sticker';
+      sticker_id: string;
+      emoji: string;
+      label?: string;
+    };
+
 export interface Comment {
   id: number;
   post_id: number;
@@ -36,6 +53,7 @@ export interface Comment {
   channel_id?: number;            // ID канала (для бана)
   parent_id: number | null;
   text: string;
+  attachments_json: CommentAttachment[];
   is_hidden: boolean;
   created_at: string;
   likes_count?: number;           // устаревшее — для совместимости
@@ -50,13 +68,21 @@ export interface Post {
   text_preview: string;
   comment_count: number;
   published_at: string;
+  media_comments_enabled?: boolean;
 }
 
 // ─── КОММЕНТАРИИ ─────────────────────────────────────────────────
 
-export async function getComments(postId: number): Promise<Comment[]> {
+interface GetCommentsOptions {
+  afterId?: number;
+}
+
+export async function getComments(postId: number, options: GetCommentsOptions = {}): Promise<Comment[]> {
   const { data } = await api.get<Comment[]>('/api/comments', {
-    params: { post_id: postId },
+    params: {
+      post_id: postId,
+      ...(options.afterId ? { after_id: options.afterId } : {}),
+    },
   });
   return data;
 }
@@ -64,12 +90,14 @@ export async function getComments(postId: number): Promise<Comment[]> {
 export async function postComment(
   postId: number,
   text: string,
-  parentId?: number
+  parentId?: number,
+  attachments: CommentAttachment[] = []
 ): Promise<Comment> {
   const { data } = await api.post<Comment>('/api/comments', {
     post_id: postId,
     text,
     parent_id: parentId ?? null,
+    attachments,
   });
   return data;
 }
@@ -92,6 +120,27 @@ export async function getPost(postId: number): Promise<Post | null> {
   try {
     const { data } = await api.get<Post>(`/api/posts/${postId}`);
     return data;
+  } catch {
+    return null;
+  }
+}
+
+// Получить результаты опроса поста.
+// Возвращает null если у поста нет опроса.
+export async function getPollResults(postId: number): Promise<{
+  question: string;
+  options: Array<{ text: string; count: number; percent: number }>;
+  total_votes: number;
+  voted_option: number | null;
+} | null> {
+  try {
+    const { data } = await api.get<{ poll: {
+      question: string;
+      options: Array<{ text: string; count: number; percent: number }>;
+      total_votes: number;
+      voted_option: number | null;
+    } | null }>(`/api/polls/${postId}/results`);
+    return data.poll;
   } catch {
     return null;
   }
@@ -129,6 +178,9 @@ export interface ChannelSummary {
   notifications_enabled: boolean;
   banned_words: string[];
   post_reactions: string[];
+  poll_enabled?: boolean;
+  poll_question?: string | null;
+  poll_options?: Array<{ text: string }> | null;
   connected_at: string;
 }
 
@@ -190,7 +242,13 @@ export async function getChannelAnalytics(
   return data;
 }
 
-export async function syncChannels(): Promise<{ registered: number; channels: ChannelSummary[] }> {
+export async function syncChannels(): Promise<{
+  registered: number;
+  channels: ChannelSummary[];
+  requires_pro?: boolean;
+  blocked_by_limit?: number;
+  message?: string;
+}> {
   const { data } = await api.post('/api/channels/sync');
   return data;
 }
@@ -202,6 +260,9 @@ export async function updateChannelSettings(
     banned_words?: string[];
     post_reactions?: string[];
     notifications_enabled?: boolean;
+    poll_enabled?: boolean;
+    poll_question?: string | null;
+    poll_options?: Array<{ text: string }> | null;
   }
 ): Promise<{
   id: number;
@@ -209,9 +270,16 @@ export async function updateChannelSettings(
   banned_words: string[];
   post_reactions: string[];
   notifications_enabled: boolean;
+  poll_enabled: boolean;
+  poll_question: string | null;
+  poll_options: Array<{ text: string }> | null;
 }> {
   const { data } = await api.patch(`/api/channels/${channelId}/settings`, settings);
   return data;
+}
+
+export async function deleteChannel(channelId: number): Promise<void> {
+  await api.delete(`/api/channels/${channelId}`);
 }
 
 // ─── АГРЕГАТОР КОММЕНТАРИЕВ ────────────────────────────────────────
@@ -219,6 +287,7 @@ export async function updateChannelSettings(
 export interface FeedItem {
   id: number;
   text: string;
+  attachments_json?: CommentAttachment[];
   created_at: string;
   author_name: string;
   post_id: number;
@@ -252,12 +321,36 @@ export async function validatePromoCode(code: string): Promise<PromoValidation> 
   return data;
 }
 
-export async function getReferralStats(): Promise<{
+export interface ReferralTeamLevel {
+  level: number;
+  invited: number;
+  converted: number;
+  earned_rub: number;
+}
+
+export interface ReferralStats {
+  referral_available: boolean;
+  requires_paid_pro: boolean;
+  has_paid_pro: boolean;
   invited: number;
   converted: number;
   days_earned: number;
+  commission_earned_rub: number;
+  manual_adjustments_rub: number;
+  balance_rub: number;
+  current_rate_percent: number;
+  next_tier_at: number | null;
+  referrals_to_next_tier: number;
   ref_link: string | null;
-}> {
+  team_levels: ReferralTeamLevel[];
+  team_total: {
+    invited: number;
+    converted: number;
+    earned_rub: number;
+  };
+}
+
+export async function getReferralStats(): Promise<ReferralStats> {
   const { data } = await api.get('/api/referrals/stats');
   return data;
 }
@@ -285,8 +378,10 @@ export interface AdminChannel {
   total_comments: number;
   comments_enabled: boolean;
   connected_at: string;
+  channel_url: string | null;
   owner_name: string | null;
-  owner_max_id: number | null;
+  owner_max_id: number | string | null;
+  owner_created_at: string | null;
 }
 
 export async function adminGetUsers(): Promise<AdminUser[]> {
@@ -358,6 +453,60 @@ export interface AdminPayment {
 export async function adminGetPayments(): Promise<AdminPayment[]> {
   const { data } = await api.get('/api/admin/payments');
   return data;
+}
+
+// ─── ADMIN: РЕФЕРАЛЫ ─────────────────────────────────────────────
+
+export interface AdminReferralReferrer {
+  id: number;
+  max_user_id: number;
+  name: string | null;
+  username: string | null;
+  ref_code: string | null;
+  invited: number;
+  converted: number;
+  days_earned: number;
+  commission_earned_rub: number;
+  manual_adjustments_rub: number;
+  balance_rub: number;
+  current_rate_percent: number;
+}
+
+export interface AdminReferralAdjustment {
+  id: number;
+  referrer_id: number;
+  referrer_name: string | null;
+  referrer_max_user_id: number;
+  admin_name: string | null;
+  admin_max_user_id: number | null;
+  amount_rub: number;
+  reason: string;
+  created_at: string;
+}
+
+export interface AdminReferralStats {
+  summary: {
+    invited: number;
+    converted: number;
+    days_earned: number;
+    commission_earned_rub: number;
+    manual_adjustments_rub: number;
+    balance_rub: number;
+  };
+  referrers: AdminReferralReferrer[];
+  adjustments: AdminReferralAdjustment[];
+}
+
+export async function adminGetReferralStats(): Promise<AdminReferralStats> {
+  const { data } = await api.get('/api/admin/referrals');
+  return data;
+}
+
+export async function adminAdjustReferralBalance(
+  referrerId: number,
+  payload: { amount_rub: number; reason: string }
+): Promise<void> {
+  await api.post(`/api/admin/referrals/${referrerId}/adjust`, payload);
 }
 
 // ─── ADMIN: ПРОМО-КОДЫ ────────────────────────────────────────────

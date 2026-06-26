@@ -21,6 +21,7 @@ interface MaxWebApp {
   expand(): void;
   close(): void;
   openLink(url: string): void;
+  shareMaxContent?(content: { text?: string; link?: string }): void;
   showAlert(message: string, callback?: () => void): void;
   showConfirm(message: string, callback: (confirmed: boolean) => void): void;
 }
@@ -56,4 +57,27 @@ export function notifyReady(): void {
 // Развернуть на весь экран (expand может отсутствовать в MAX)
 export function expand(): void {
   window.WebApp?.expand?.();
+}
+
+export function showAlert(message: string): void {
+  if (window.WebApp?.showAlert) {
+    window.WebApp.showAlert(message);
+    return;
+  }
+  console.info(message);
+}
+
+export async function shareReferralLink(link: string, text: string): Promise<'shared' | 'copied'> {
+  if (window.WebApp?.shareMaxContent) {
+    window.WebApp.shareMaxContent({ text, link });
+    return 'shared';
+  }
+
+  if (navigator.share) {
+    await navigator.share({ title: 'Комментарии в ПОСТ', text, url: link });
+    return 'shared';
+  }
+
+  await navigator.clipboard.writeText(link);
+  return 'copied';
 }

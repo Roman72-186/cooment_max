@@ -60,6 +60,7 @@ CREATE TABLE comments (
   author_id    BIGINT REFERENCES users(id),
   parent_id    BIGINT REFERENCES comments(id),  -- NULL = корневой комментарий
   text         TEXT NOT NULL CHECK (length(text) <= 2000),
+  attachments_json JSONB NOT NULL DEFAULT '[]',  -- фото/стикеры в комментарии
   is_hidden    BOOLEAN DEFAULT false,            -- мягкое удаление / модерация
   created_at   TIMESTAMPTZ DEFAULT NOW()
 );
@@ -75,6 +76,35 @@ CREATE TABLE payments (
   plan          VARCHAR(20),
   status        VARCHAR(20),          -- pending | succeeded | cancelled
   created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─────────────────────────────────────────────────
+-- РЕФЕРАЛЬНЫЕ НАЧИСЛЕНИЯ
+-- ─────────────────────────────────────────────────
+CREATE TABLE referral_rewards (
+  id                    BIGSERIAL PRIMARY KEY,
+  referrer_id           BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  referred_user_id      BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  payment_id            BIGINT REFERENCES payments(id) ON DELETE SET NULL,
+  reward_type           TEXT NOT NULL CHECK (reward_type IN ('first_pro_days', 'commission')),
+  reward_days           INT NOT NULL DEFAULT 0 CHECK (reward_days >= 0),
+  commission_percent    INT NOT NULL DEFAULT 0 CHECK (commission_percent >= 0 AND commission_percent <= 100),
+  commission_amount_rub NUMERIC(10,2) NOT NULL DEFAULT 0 CHECK (commission_amount_rub >= 0),
+  paid_referrals_count  INT NOT NULL DEFAULT 0 CHECK (paid_referrals_count >= 0),
+  status                TEXT NOT NULL DEFAULT 'approved' CHECK (status IN ('approved', 'paid', 'cancelled')),
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ─────────────────────────────────────────────────
+-- РУЧНЫЕ КОРРЕКТИРОВКИ РЕФЕРАЛЬНОГО БАЛАНСА
+-- ─────────────────────────────────────────────────
+CREATE TABLE referral_balance_adjustments (
+  id             BIGSERIAL PRIMARY KEY,
+  referrer_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  admin_user_id  BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  amount_rub     NUMERIC(10,2) NOT NULL CHECK (amount_rub <> 0),
+  reason         TEXT NOT NULL DEFAULT '',
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ─────────────────────────────────────────────────
@@ -104,6 +134,16 @@ CREATE INDEX idx_posts_published_at   ON posts(published_at);           -- пе�
 CREATE INDEX idx_posts_last_activity  ON posts(last_activity_at) WHERE last_activity_at IS NOT NULL; -- третья OR-ветка: удаление комментариев на старых постах
 CREATE INDEX idx_comments_post_vis    ON comments(post_id) WHERE is_hidden = false; -- getCommentCount (каждые 60 с)
 CREATE INDEX idx_comments_author_id   ON comments(author_id);           -- LEFT JOIN users в GET /api/comments и /feed
+CREATE INDEX idx_comments_post_visible_id ON comments(post_id, id) WHERE is_hidden = false;
+CREATE INDEX idx_comments_post_visible_created_id ON comments(post_id, created_at, id) WHERE is_hidden = false;
+CREATE INDEX idx_posts_channel_published_comments ON posts(channel_id, published_at DESC, comment_count DESC);
+CREATE UNIQUE INDEX idx_referral_rewards_first_once ON referral_rewards(referrer_id, referred_user_id) WHERE reward_type = 'first_pro_days';
+CREATE UNIQUE INDEX idx_referral_rewards_payment_type ON referral_rewards(payment_id, reward_type) WHERE payment_id IS NOT NULL;
+CREATE INDEX idx_referral_rewards_referrer ON referral_rewards(referrer_id, created_at DESC);
+CREATE INDEX idx_referral_rewards_referred ON referral_rewards(referred_user_id, created_at DESC);
+CREATE INDEX idx_referral_adjustments_referrer ON referral_balance_adjustments(referrer_id, created_at DESC);
+CREATE INDEX idx_referral_adjustments_created ON referral_balance_adjustments(created_at DESC);
+CREATE INDEX idx_users_referred_by ON users(referred_by);
 
 -- ─────────────────────────────────────────────────
 -- МИГРАЦИИ (применяются к уже развёрнутой БД)
@@ -113,6 +153,7 @@ ALTER TABLE channels ADD COLUMN IF NOT EXISTS notifications_enabled BOOLEAN NOT 
 
 -- Колонки для постов и каналов (реакции, комментарии, стоп-слова)
 ALTER TABLE posts    ADD COLUMN IF NOT EXISTS attachments_json   JSONB    NOT NULL DEFAULT '[]';
+ALTER TABLE comments ADD COLUMN IF NOT EXISTS attachments_json   JSONB    NOT NULL DEFAULT '[]';
 ALTER TABLE posts    ADD COLUMN IF NOT EXISTS comments_enabled   BOOLEAN  NOT NULL DEFAULT true;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS comments_enabled   BOOLEAN  NOT NULL DEFAULT true;
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS banned_words       TEXT[]   NOT NULL DEFAULT '{}';
@@ -162,6 +203,9 @@ CREATE TABLE IF NOT EXISTS post_subscriptions (
   UNIQUE(post_id, user_max_id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_post_subscriptions_post_last_notified
+  ON post_subscriptions(post_id, last_notified_at);
+
 -- Очередь уведомлений об ответах на комментарии
 -- Backend пишет при создании reply, бот читает и отправляет DM
 CREATE TABLE IF NOT EXISTS reply_notifications (
@@ -175,5 +219,39 @@ CREATE TABLE IF NOT EXISTS reply_notifications (
 -- Partial index: быстрый поиск неотправленных уведомлений (sent_at IS NULL)
 -- Незначительный размер — только «живые» строки попадают в индекс
 CREATE INDEX IF NOT EXISTS idx_reply_notif_unsent ON reply_notifications(created_at) WHERE sent_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_reply_notifications_unsent_created_id ON reply_notifications(created_at, id) WHERE sent_at IS NULL;
 
 -- idx_comments_author_id уже создан выше в секции ИНДЕКСЫ (строка 104)
+
+-- ─────────────────────────────────────────────────
+-- СНАПШОТ EMOJI-РЕАКЦИЙ НА МОМЕНТ СОЗДАНИЯ ПОСТА
+-- (migration 003: изменение настроек канала не трогает старые посты)
+-- ─────────────────────────────────────────────────
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS post_reactions TEXT[] NOT NULL DEFAULT '{}';
+
+-- ─────────────────────────────────────────────────
+-- ДИНАМИЧЕСКИЕ НАСТРОЙКИ ПЛАТФОРМЫ
+-- (migration 001: цена и длительность PRO через admin panel)
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS app_settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+-- ─────────────────────────────────────────────────
+-- ПРОМО-КОДЫ
+-- (migration 002)
+-- ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS promo_codes (
+  id               BIGSERIAL PRIMARY KEY,
+  code             TEXT UNIQUE NOT NULL,
+  discount_percent INT  NOT NULL CHECK (discount_percent > 0 AND discount_percent <= 100),
+  max_uses         INT,
+  used_count       INT  NOT NULL DEFAULT 0,
+  expires_at       TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Новые колонки в payments (migration 002)
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS promo_code       TEXT;
+ALTER TABLE payments ADD COLUMN IF NOT EXISTS discount_percent INT;

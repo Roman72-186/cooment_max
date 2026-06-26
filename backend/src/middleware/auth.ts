@@ -70,8 +70,9 @@ function validateInitData(initData: string, token: string): MaxUser | null {
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
   const initData = req.headers['x-init-data'] as string | undefined;
 
-  // В dev-режиме пропускаем проверку и используем тестового пользователя
-  if (process.env.NODE_ENV !== 'production') {
+  // Dev-режим: только если явно задан DEV_AUTH=true (не по умолчанию!)
+  // Защита от случайного включения на prod — отсутствие NODE_ENV не даёт bypass
+  if (process.env.DEV_AUTH === 'true') {
     req.maxUser = { user_id: 1, name: 'Dev User', is_bot: false };
     next();
     return;
@@ -100,7 +101,8 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
 export function optionalAuth(req: Request, _res: Response, next: NextFunction): void {
   const initData = req.headers['x-init-data'] as string | undefined;
 
-  if (process.env.NODE_ENV !== 'production') {
+  // Dev-режим: только если явно задан DEV_AUTH=true
+  if (process.env.DEV_AUTH === 'true') {
     req.maxUser = { user_id: 1, name: 'Dev User', is_bot: false };
     next();
     return;

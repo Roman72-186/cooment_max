@@ -1,14 +1,13 @@
 // Dashboard — главная страница владельца канала
 import { useEffect, useState } from 'react';
 import { useAppStore } from '../store/useAppStore';
-import { getReferralStats } from '../api/backend';
-import type { ChannelSummary } from '../api/backend';
+import { getReferralStats, getUserMe, syncChannels } from '../api/backend';
+import type { ChannelSummary, ReferralStats } from '../api/backend';
 
 export function DashboardPage() {
-  const { user, setPage } = useAppStore();
-  const [refStats, setRefStats] = useState<{
-    invited: number; converted: number; days_earned: number; ref_link: string | null;
-  } | null>(null);
+  const { user, setUser, setPage, addToast } = useAppStore();
+  const [refStats, setRefStats] = useState<ReferralStats | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
   useEffect(() => {
     getReferralStats().then(setRefStats).catch(() => {});
@@ -16,11 +15,37 @@ export function DashboardPage() {
 
   if (!user) return null;
 
+  const handleSyncChannels = async () => {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      const syncResult = await syncChannels();
+      const freshUser = await getUserMe();
+      setUser(freshUser);
+      if (syncResult.requires_pro) {
+        addToast({ type: 'warning', message: 'Для 2 и более каналов нужен PRO' });
+      } else {
+        addToast({ type: 'success', message: 'Каналы обновлены' });
+      }
+    } catch {
+      addToast({ type: 'error', message: 'Не удалось обновить каналы' });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const isPro = user.plan === 'pro' &&
     (!user.plan_expires || new Date(user.plan_expires) > new Date());
 
-  const refLink = refStats?.ref_link
-    ?? (user.ref_code ? `https://max.ru/id861708697380_2_bot?start=ref_${user.ref_code}` : null);
+  const totalPosts = user.channels.reduce((sum, ch) => sum + ch.post_count, 0);
+  const totalComments = user.channels.reduce((sum, ch) => sum + ch.total_comments, 0);
+  const activeChannels = user.channels.filter((ch) => ch.is_active).length;
+  const referralBalance = refStats
+    ? refStats.balance_rub.toLocaleString('ru-RU', {
+        minimumFractionDigits: refStats.balance_rub % 1 === 0 ? 0 : 2,
+        maximumFractionDigits: 2,
+      })
+    : null;
 
   return (
     <div className="page">
@@ -32,7 +57,14 @@ export function DashboardPage() {
               {isPro ? 'PRO' : 'FREE'}
             </span>
           </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div className="dashboard-header__actions">
+            <button
+              className="btn btn--ghost btn--sm"
+              onClick={handleSyncChannels}
+              disabled={syncing}
+            >
+              {syncing ? '...' : 'Обновить'}
+            </button>
             <button
               className="btn btn--ghost btn--sm"
               onClick={() => setPage({ id: 'pricing' })}
@@ -44,9 +76,31 @@ export function DashboardPage() {
       </header>
 
       <main className="page-content">
+        {user.channels.length > 0 && (
+          <div className="dashboard-overview" aria-label="Сводка по каналам">
+            <div className="dashboard-overview__item">
+              <span className="dashboard-overview__value">{user.channels.length}</span>
+              <span className="dashboard-overview__label">каналов</span>
+            </div>
+            <div className="dashboard-overview__item">
+              <span className="dashboard-overview__value">{activeChannels}</span>
+              <span className="dashboard-overview__label">активных</span>
+            </div>
+            <div className="dashboard-overview__item">
+              <span className="dashboard-overview__value">{totalPosts}</span>
+              <span className="dashboard-overview__label">постов</span>
+            </div>
+            <div className="dashboard-overview__item">
+              <span className="dashboard-overview__value">{totalComments}</span>
+              <span className="dashboard-overview__label">комментариев</span>
+            </div>
+          </div>
+        )}
+
         {user.channels.length === 0 ? (
           <div className="empty-state">
-            <span>Нет подключённых каналов</span>
+            <span className="empty-state__icon">📡</span>
+            <span className="empty-state__text">Нет подключённых каналов</span>
             <button
               className="btn btn--primary"
               onClick={() => setPage({ id: 'onboarding' })}
@@ -60,6 +114,7 @@ export function DashboardPage() {
               <ChannelCard
                 key={ch.id}
                 channel={ch}
+                isPro={isPro}
                 onAnalytics={() => setPage({ id: 'analytics', channelId: ch.id })}
                 onSettings={() => setPage({ id: 'settings', channelId: ch.id })}
                 onInbox={() => setPage({ id: 'inbox', channelId: ch.id, channelName: ch.channel_name ?? ch.max_chat_id })}
@@ -69,34 +124,45 @@ export function DashboardPage() {
         )}
 
         {/* Реферальная программа */}
-        {refLink && (
+        {isPro && (refStats || user.ref_code) && (
           <div className="ref-card">
             <div className="ref-card__title">🔗 Реферальная программа</div>
             <div className="ref-card__desc">
-              Пригласите владельца канала — он получит <strong>+7 дней PRO</strong> бесплатно,
-              вы получите <strong>+30 дней PRO</strong> когда он оформит подписку.
+              Доступна на активном PRO. Внутри — ссылка для отправки, команда до 5 линии,
+              баланс и информация по выводу денег на карту.
             </div>
             {refStats && (
-              <div className="ref-stats">
-                <div className="ref-stat">
-                  <span className="ref-stat__val">{refStats.invited}</span>
-                  <span className="ref-stat__lbl">приглашено</span>
+              <>
+                <div className="ref-stats">
+                  <div className="ref-stat">
+                    <span className="ref-stat__val">{refStats.team_total?.invited ?? refStats.invited}</span>
+                    <span className="ref-stat__lbl">в команде</span>
+                  </div>
+                  <div className="ref-stat">
+                    <span className="ref-stat__val">{refStats.team_total?.converted ?? refStats.converted}</span>
+                    <span className="ref-stat__lbl">купили PRO</span>
+                  </div>
+                  <div className="ref-stat">
+                    <span className="ref-stat__val">{referralBalance} ₽</span>
+                    <span className="ref-stat__lbl">баланс</span>
+                  </div>
+                  <div className="ref-stat">
+                    <span className="ref-stat__val">{refStats.current_rate_percent}%</span>
+                    <span className="ref-stat__lbl">текущий уровень</span>
+                  </div>
                 </div>
-                <div className="ref-stat">
-                  <span className="ref-stat__val">{refStats.converted}</span>
-                  <span className="ref-stat__lbl">купили PRO</span>
+                <div className="ref-tier-note">
+                  {refStats.referral_available
+                    ? 'Реферальная ссылка активна. Баланс можно будет вывести на карту.'
+                    : 'Нужен активный PRO. После включения тарифа здесь появится ссылка.'}
                 </div>
-                <div className="ref-stat">
-                  <span className="ref-stat__val">{refStats.days_earned}</span>
-                  <span className="ref-stat__lbl">дней заработано</span>
-                </div>
-              </div>
+              </>
             )}
             <button
-              className="btn btn--ghost btn--sm"
-              onClick={() => navigator.clipboard.writeText(refLink)}
+              className="btn btn--primary btn--sm"
+              onClick={() => setPage({ id: 'referrals' })}
             >
-              Скопировать ссылку
+              Открыть реферальный кабинет
             </button>
           </div>
         )}
@@ -109,6 +175,7 @@ export function DashboardPage() {
 
 interface ChannelCardProps {
   channel: ChannelSummary;
+  isPro: boolean;
   onAnalytics: () => void;
   onSettings: () => void;
   onInbox: () => void;
@@ -123,7 +190,9 @@ function openChannelInMax(chatId: string) {
   }
 }
 
-function ChannelCard({ channel, onAnalytics, onSettings, onInbox }: ChannelCardProps) {
+function ChannelCard({ channel, isPro, onAnalytics, onSettings, onInbox }: ChannelCardProps) {
+  const commentsState = channel.comments_enabled ? 'Комментарии включены' : 'Комментарии выключены';
+
   return (
     <div className="channel-card">
       <div className="channel-card__header">
@@ -154,15 +223,32 @@ function ChannelCard({ channel, onAnalytics, onSettings, onInbox }: ChannelCardP
         </div>
       </div>
 
-      <div className="channel-card__actions">
-        <button className="btn btn--ghost btn--sm" onClick={onInbox} title="Входящие комментарии">
-          📥
+      <div className="channel-card__actions channel-card__actions--tiles">
+        <button className="dashboard-action" onClick={onInbox}>
+          <span className="dashboard-action__icon">📥</span>
+          <span className="dashboard-action__body">
+            <span className="dashboard-action__title">Входящие</span>
+            <span className="dashboard-action__hint">Новые комментарии</span>
+          </span>
+          <span className="dashboard-action__arrow">→</span>
         </button>
-        <button className="btn btn--secondary btn--sm" onClick={onAnalytics}>
-          Аналитика
-        </button>
-        <button className="btn btn--ghost btn--sm" onClick={onSettings}>
-          Настройки
+        {isPro && (
+          <button className="dashboard-action" onClick={onAnalytics}>
+            <span className="dashboard-action__icon">📊</span>
+            <span className="dashboard-action__body">
+              <span className="dashboard-action__title">Аналитика</span>
+              <span className="dashboard-action__hint">Посты и реакции</span>
+            </span>
+            <span className="dashboard-action__arrow">→</span>
+          </button>
+        )}
+        <button className="dashboard-action dashboard-action--primary" onClick={onSettings}>
+          <span className="dashboard-action__icon">⚙️</span>
+          <span className="dashboard-action__body">
+            <span className="dashboard-action__title">Настройки</span>
+            <span className="dashboard-action__hint">{commentsState}</span>
+          </span>
+          <span className="dashboard-action__arrow">→</span>
         </button>
       </div>
     </div>

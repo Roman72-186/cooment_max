@@ -1,12 +1,13 @@
-version: '3.9'
-
 networks:
   max-comments-net:
     name: max-comments-net
     driver: bridge
+  # Внешняя сеть urbot — нужна для nginx, который обслуживает оба проекта
+  urbot-net:
+    name: urbot-net
+    external: true
 
 volumes:
-  mc_redis_data:
   mc_postgres_data:
 
 services:
@@ -24,16 +25,12 @@ services:
       POSTGRES_DB: maxcomments
       POSTGRES_USER: mcuser
       POSTGRES_PASSWORD: ${DB_PASSWORD}
-
-  # 2. Redis — кэш и очередь задач
-  mc_redis:
-    image: redis:7-alpine
-    container_name: mc_redis
-    restart: unless-stopped
-    networks: [max-comments-net]
-    volumes:
-      - mc_redis_data:/data
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcuser -d maxcomments"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # 3. Bot — принимает webhook-события MAX
   mc_bot:
@@ -43,11 +40,19 @@ services:
     container_name: mc_bot
     restart: unless-stopped
     networks: [max-comments-net]
-    depends_on: [mc_postgres, mc_redis]
+    depends_on:
+      mc_postgres:
+        condition: service_healthy
     env_file: .env
     dns:
       - 85.193.93.194
       - 85.193.93.193
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # 4. Backend — REST API для Mini App
   mc_backend:
@@ -57,21 +62,34 @@ services:
     container_name: mc_backend
     restart: unless-stopped
     networks: [max-comments-net]
-    depends_on: [mc_postgres, mc_redis]
+    depends_on:
+      mc_postgres:
+        condition: service_healthy
     env_file: .env
     dns:
       - 85.193.93.194
       - 85.193.93.193
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3001/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # 5. Nginx — раздаёт Mini App + обратный прокси для API/webhook
+  # Подключён к обеим сетям: видит mc_backend и urbot-backend одновременно
   mc_nginx:
     build:
       context: ..
       dockerfile: infra/Dockerfile.nginx
     container_name: mc_nginx
     restart: unless-stopped
-    networks: [max-comments-net]
-    depends_on: [mc_bot, mc_backend]
+    networks: [max-comments-net, urbot-net]
+    depends_on:
+      mc_bot:
+        condition: service_healthy
+      mc_backend:
+        condition: service_healthy
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./ssl:/etc/nginx/ssl:ro
