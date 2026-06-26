@@ -257,7 +257,8 @@ channelsRouter.post('/sync', requireAuth, async (req, res) => {
 function getUserChannels(userId: number) {
   return pool.query(
     `SELECT id, max_chat_id, channel_name, is_active, post_count,
-            comments_enabled, notifications_enabled, banned_words, post_reactions, connected_at,
+            comments_enabled, notifications_enabled, banned_words, post_reactions,
+            poll_enabled, poll_question, poll_options, connected_at,
             COALESCE((
               SELECT COUNT(*) FROM comments cm
               JOIN posts p ON p.id = cm.post_id
@@ -303,7 +304,10 @@ channelsRouter.get('/:id/analytics', requireAuth, async (req, res) => {
          d.date::text                                          AS date,
          COALESCE(ad.views, 0)::int                           AS views,
          COALESCE(agg.comments, 0)::int                       AS comments,
-         COALESCE(agg.reactions, 0)::int                      AS reactions
+         (
+           COALESCE(agg.comment_reactions, 0) +
+           COALESCE(post_reactions.reactions, 0)
+         )::int                                                AS reactions
        FROM generate_series(
          CURRENT_DATE - ($2::int - 1) * INTERVAL '1 day',
          CURRENT_DATE,
@@ -314,8 +318,8 @@ channelsRouter.get('/:id/analytics', requireAuth, async (req, res) => {
        LEFT JOIN (
          SELECT
            DATE(c.created_at)          AS day,
-           COUNT(c.id)                 AS comments,
-           COUNT(r.comment_id)         AS reactions
+           COUNT(DISTINCT c.id)        AS comments,
+           COUNT(r.comment_id)         AS comment_reactions
          FROM comments c
          JOIN posts p ON p.id = c.post_id
          LEFT JOIN comment_reactions r ON r.comment_id = c.id
@@ -323,6 +327,15 @@ channelsRouter.get('/:id/analytics', requireAuth, async (req, res) => {
            AND c.is_hidden = false
          GROUP BY DATE(c.created_at)
        ) agg ON agg.day = d.date
+       LEFT JOIN (
+         SELECT
+           DATE(p.published_at)              AS day,
+           COALESCE(SUM(prc.count), 0)::int  AS reactions
+         FROM posts p
+         JOIN post_reaction_counts prc ON prc.post_id = p.id
+         WHERE p.channel_id = $1
+         GROUP BY DATE(p.published_at)
+       ) post_reactions ON post_reactions.day = d.date
        ORDER BY d.date ASC`,
       [channelId, days]
     );
@@ -332,7 +345,7 @@ channelsRouter.get('/:id/analytics', requireAuth, async (req, res) => {
       `SELECT id, text_preview, comment_count, published_at
          FROM posts
         WHERE channel_id = $1
-          AND published_at >= CURRENT_DATE - ($2 || ' days')::interval
+          AND published_at >= CURRENT_DATE - ($2::int - 1) * INTERVAL '1 day'
         ORDER BY comment_count DESC
         LIMIT 5`,
       [channelId, days]

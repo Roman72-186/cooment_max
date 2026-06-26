@@ -29,6 +29,11 @@ function roundRub(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
+function buildMaxChannelUrl(chatId: string | null): string | null {
+  if (!chatId) return null;
+  return `https://max.ru/id${encodeURIComponent(chatId)}`;
+}
+
 // ─── Middleware: проверка is_admin по initData ──────────────────────────────
 
 async function requireAdminUser(req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -142,13 +147,18 @@ adminRouter.get('/channels', requireAuth, requireAdminUser, async (req, res) => 
       SELECT
         c.id, c.max_chat_id, c.channel_name, c.is_active,
         c.post_count, c.total_comments, c.comments_enabled, c.connected_at,
-        u.name AS owner_name, u.max_user_id AS owner_max_id
+        u.name AS owner_name, u.max_user_id AS owner_max_id,
+        u.created_at AS owner_created_at
       FROM channels c
       LEFT JOIN users u ON u.id = c.owner_id
       ORDER BY c.connected_at DESC
       LIMIT $1 OFFSET $2
     `, [limit, offset]);
-    res.json(rows.map(r => ({ ...r, id: Number(r.id) })));
+    res.json(rows.map(r => ({
+      ...r,
+      id: Number(r.id),
+      channel_url: buildMaxChannelUrl(r.max_chat_id),
+    })));
   } catch (err) {
     console.error('GET /api/admin/channels error:', err);
     res.status(500).json({ error: 'Ошибка сервера' });

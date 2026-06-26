@@ -378,8 +378,10 @@ export interface AdminChannel {
   total_comments: number;
   comments_enabled: boolean;
   connected_at: string;
+  channel_url: string | null;
   owner_name: string | null;
-  owner_max_id: number | null;
+  owner_max_id: number | string | null;
+  owner_created_at: string | null;
 }
 
 export async function adminGetUsers(): Promise<AdminUser[]> {

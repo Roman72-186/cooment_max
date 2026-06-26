@@ -276,11 +276,32 @@ export function AdminPage() {
     .filter(p => p.status === 'succeeded')
     .reduce((s, p) => s + Number(p.amount_rub), 0);
 
+  const formatDateTime = (value: string | null | undefined) => {
+    if (!value) return '—';
+    return new Date(value).toLocaleString('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  };
+
+  const openAdminChannelLink = (url: string) => {
+    const webApp = (window as any).WebApp;
+    if (webApp && typeof webApp.openLink === 'function') {
+      webApp.openLink(url);
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
   const filteredUsers = useMemo(() => {
     const q = userSearch.toLowerCase();
     return users.filter(u => {
       const matchSearch = !q ||
         (u.name ?? '').toLowerCase().includes(q) ||
+        (u.username ?? '').toLowerCase().includes(q) ||
         String(u.max_user_id).includes(q);
       const matchPlan = planFilter === 'all' || u.plan === planFilter;
       return matchSearch && matchPlan;
@@ -292,7 +313,9 @@ export function AdminPage() {
     return channels.filter(ch => {
       const matchSearch = !q ||
         (ch.channel_name ?? '').toLowerCase().includes(q) ||
-        (ch.owner_name ?? '').toLowerCase().includes(q);
+        (ch.owner_name ?? '').toLowerCase().includes(q) ||
+        String(ch.max_chat_id).toLowerCase().includes(q) ||
+        String(ch.owner_max_id ?? '').includes(q);
       const matchFilter =
         channelFilter === 'all' ||
         (channelFilter === 'active' && ch.is_active) ||
@@ -438,6 +461,9 @@ export function AdminPage() {
                         <> до {new Date(u.plan_expires).toLocaleDateString('ru-RU')}</>
                       )}
                     </div>
+                    <div className="admin-card__meta admin-card__meta--secondary">
+                      Присоединился: {formatDateTime(u.created_at)}
+                    </div>
                   </div>
                   <div className="admin-card__actions">
                     {u.plan === 'pro'
@@ -483,10 +509,22 @@ export function AdminPage() {
                       <span className={`admin-badge ${ch.is_active ? 'admin-badge--on' : 'admin-badge--off'}`}>
                         {ch.is_active ? 'активен' : 'выключен'}
                       </span>
+                      {ch.channel_url && (
+                        <button
+                          type="button"
+                          className="admin-channel-link"
+                          onClick={() => openAdminChannelLink(ch.channel_url!)}
+                        >
+                          Открыть ↗
+                        </button>
+                      )}
                     </div>
                     <div className="admin-card__meta">
                       {ch.owner_name ?? `ID ${ch.owner_max_id}`} ·{' '}
                       {ch.post_count} постов · {ch.total_comments} комм.
+                    </div>
+                    <div className="admin-card__meta admin-card__meta--secondary">
+                      Канал: {formatDateTime(ch.connected_at)} · Пользователь: {formatDateTime(ch.owner_created_at)}
                     </div>
                   </div>
                   <div className="admin-card__actions">

@@ -228,9 +228,9 @@ export function SettingsPage({ channelId }: Props) {
   };
 
   // Автосохранение стоп-слов
-  const saveBannedAuto = async () => {
+  const saveBannedAuto = async (nextInput = bannedInput) => {
     if (!isPro) return;
-    const banned = bannedInput
+    const banned = nextInput
       .split(',')
       .map((w) => w.trim().toLowerCase())
       .filter(Boolean);
@@ -260,13 +260,13 @@ export function SettingsPage({ channelId }: Props) {
     setBannedInput(value);
     setBannedDirty(true);
     clearTimeout(bannedTimerRef.current);
-    bannedTimerRef.current = setTimeout(saveBannedAuto, 1200);
+    bannedTimerRef.current = setTimeout(() => saveBannedAuto(value), 1200);
   };
 
   const handleBannedInputBlur = () => {
     if (bannedDirty) {
       clearTimeout(bannedTimerRef.current);
-      saveBannedAuto();
+      saveBannedAuto(bannedInput);
     }
   };
 
@@ -283,7 +283,7 @@ export function SettingsPage({ channelId }: Props) {
     setBannedInput(newValue);
     setBannedDirty(true);
     clearTimeout(bannedTimerRef.current);
-    bannedTimerRef.current = setTimeout(saveBannedAuto, 1200);
+    bannedTimerRef.current = setTimeout(() => saveBannedAuto(newValue), 1200);
   }, [addToast, bannedInput, isPro, setPage]);
 
   const addCategory = useCallback((categoryWords: string[]) => {
@@ -299,7 +299,7 @@ export function SettingsPage({ channelId }: Props) {
     setBannedInput(newValue);
     setBannedDirty(true);
     clearTimeout(bannedTimerRef.current);
-    bannedTimerRef.current = setTimeout(saveBannedAuto, 1200);
+    bannedTimerRef.current = setTimeout(() => saveBannedAuto(newValue), 1200);
   }, [addToast, bannedInput, isPro, setPage]);
 
   const applyRecommended = useCallback(() => {
@@ -307,9 +307,12 @@ export function SettingsPage({ channelId }: Props) {
   }, [addCategory]);
 
   // Автосохранение реакций
-  const saveReactionsAuto = async () => {
+  const saveReactionsAuto = async (
+    nextEnabled = reactionsEnabled,
+    nextSelected = selectedReactions
+  ) => {
     if (!isPro) return;
-    const reactions = reactionsEnabled ? selectedReactions : [];
+    const reactions = nextEnabled ? nextSelected : [];
     try {
       const result = await updateChannelSettings(channelId, { post_reactions: reactions });
       updateChannel({ id: channelId, post_reactions: result.post_reactions });
@@ -328,11 +331,14 @@ export function SettingsPage({ channelId }: Props) {
       setPage({ id: 'pricing' });
       return;
     }
+    const nextSelected = enabled
+      ? (selectedReactions.length > 0 ? selectedReactions : [PRESET_EMOJIS[0]])
+      : [];
     setReactionsEnabled(enabled);
-    if (!enabled) setSelectedReactions([]);
+    setSelectedReactions(nextSelected);
     setReactionsDirty(true);
     clearTimeout(reactionsTimerRef.current);
-    reactionsTimerRef.current = setTimeout(saveReactionsAuto, 800);
+    reactionsTimerRef.current = setTimeout(() => saveReactionsAuto(enabled, nextSelected), 800);
   };
 
   const toggleEmoji = useCallback((emoji: string) => {
@@ -341,15 +347,14 @@ export function SettingsPage({ channelId }: Props) {
       setPage({ id: 'pricing' });
       return;
     }
-    setSelectedReactions(prev =>
-      prev.includes(emoji)
-        ? prev.filter(e => e !== emoji)
-        : prev.length < 5 ? [...prev, emoji] : prev
-    );
+    const nextSelected = selectedReactions.includes(emoji)
+      ? selectedReactions.filter(e => e !== emoji)
+      : selectedReactions.length < 5 ? [...selectedReactions, emoji] : selectedReactions;
+    setSelectedReactions(nextSelected);
     setReactionsDirty(true);
     clearTimeout(reactionsTimerRef.current);
-    reactionsTimerRef.current = setTimeout(saveReactionsAuto, 800);
-  }, [addToast, isPro, setPage]);
+    reactionsTimerRef.current = setTimeout(() => saveReactionsAuto(reactionsEnabled, nextSelected), 800);
+  }, [addToast, isPro, reactionsEnabled, selectedReactions, setPage]);
 
   // ── Сохранение настроек опроса ────────────────────────────────
   const handleSavePoll = async () => {
@@ -393,14 +398,14 @@ export function SettingsPage({ channelId }: Props) {
   };
 
   // Автосохранение опроса
-  const savePollAuto = async () => {
+  const savePollAuto = async (nextTemplate = pollTemplate) => {
     if (!isPro) return;
-    if (pollTemplate.poll_enabled) {
-      if (!pollTemplate.poll_question.trim()) {
+    if (nextTemplate.poll_enabled) {
+      if (!nextTemplate.poll_question.trim()) {
         addToast({ type: 'error', message: 'Заполните вопрос опроса' });
         return;
       }
-      const validOptions = pollTemplate.poll_options.filter(o => o.text.trim().length > 0);
+      const validOptions = nextTemplate.poll_options.filter(o => o.text.trim().length > 0);
       if (validOptions.length < 2) {
         addToast({ type: 'error', message: 'Нужно минимум 2 варианта ответа' });
         return;
@@ -408,11 +413,11 @@ export function SettingsPage({ channelId }: Props) {
     }
 
     try {
-      const cleanOptions = pollTemplate.poll_options.map(o => ({ text: o.text.trim() }));
+      const cleanOptions = nextTemplate.poll_options.map(o => ({ text: o.text.trim() }));
       const result = await updateChannelSettings(channelId, {
-        poll_enabled: pollTemplate.poll_enabled,
-        poll_question: pollTemplate.poll_question.trim() || null,
-        poll_options: pollTemplate.poll_enabled ? cleanOptions : null,
+        poll_enabled: nextTemplate.poll_enabled,
+        poll_question: nextTemplate.poll_question.trim() || null,
+        poll_options: nextTemplate.poll_enabled ? cleanOptions : null,
       });
       updateChannel({
         id: channelId,
@@ -434,13 +439,13 @@ export function SettingsPage({ channelId }: Props) {
     setPollTemplate(newTemplate);
     setPollDirty(true);
     clearTimeout(pollTimerRef.current);
-    pollTimerRef.current = setTimeout(savePollAuto, 1000);
+    pollTimerRef.current = setTimeout(() => savePollAuto(newTemplate), 1000);
   };
 
   const handlePollTemplateBlur = () => {
     if (pollDirty) {
       clearTimeout(pollTimerRef.current);
-      savePollAuto();
+      savePollAuto(pollTemplate);
     }
   };
 
