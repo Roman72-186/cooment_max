@@ -28,6 +28,7 @@ Thumbs.db
 # Кэш Vite
 .vite/
 miniapp/.vite/
+**/.wrangler/cache/
 
 # Одноразовые скрипты деплоя и e2e (создаются под задачу, не версионируются)
 /deploy_*.py
