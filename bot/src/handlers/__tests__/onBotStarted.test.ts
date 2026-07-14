@@ -105,6 +105,16 @@ describe('onBotStarted', () => {
     expect(text).toContain('Иван');
   });
 
+  it('welcome message кратко описывает возможности и различия тарифов', async () => {
+    await onBotStarted(makeBotStartedUpdate(1, 'Иван') as any);
+    const text = vi.mocked(maxClient.sendMessageToUser).mock.calls[0][1];
+    expect(text).toContain('Аналитика');
+    expect(text).toContain('Опросы');
+    expect(text).toContain('Антифрод и модерация');
+    expect(text).toContain('FREE');
+    expect(text).toContain('PRO');
+  });
+
   it('кнопка содержит open_app с правильным URL', async () => {
     await onBotStarted(makeBotStartedUpdate(1, 'X') as any);
     const attachments = vi.mocked(maxClient.sendMessageToUser).mock.calls[0][2] as any[];
