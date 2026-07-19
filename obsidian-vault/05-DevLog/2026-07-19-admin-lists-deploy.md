@@ -18,3 +18,9 @@
 ## Грабли
 
 - Пароль root из `git-pushing/projects.json` (запись `max-comments`) больше не подходит – после утечки в git-историю его, видимо, сменили. Рабочий доступ – только SSH-ключ через alias `nl-vscode`. Плюс ключ записи в projects.json (`max-comments`) не совпадает с именем директории репо (`cooment_max`), поэтому автодеплой скилла для этого проекта и раньше не срабатывал.
+
+## Фикс автодеплоя (той же сессией)
+
+- `projects.json`: запись переименована `max-comments` → `cooment_max` (lookup идёт по basename корня репо), мёртвый пароль убран, добавлены `sshAlias: nl-vscode`, `hostkey` и `remoteRoot: /opt/max-comments`.
+- `smart_commit.sh`: новый режим – при `sshAlias` идёт по SSH-ключу; при `remoteRoot` файлы последнего коммита заливаются `tar | ssh tar -x` (сервер без git). Deploy-команда пересобирает `mc_bot mc_backend mc_nginx`, гоняет `nginx -t` и `curl /health`.
+- Легаси-режим по паролю (plink/sshpass) для остальных проектов не тронут.
