@@ -385,12 +385,12 @@ export interface AdminChannel {
 }
 
 export async function adminGetUsers(): Promise<AdminUser[]> {
-  const { data } = await api.get('/api/admin/users');
+  const { data } = await api.get('/api/admin/users', { params: { limit: 5000 } });
   return data;
 }
 
 export async function adminGetChannels(): Promise<AdminChannel[]> {
-  const { data } = await api.get('/api/admin/channels');
+  const { data } = await api.get('/api/admin/channels', { params: { limit: 5000 } });
   return data;
 }
 

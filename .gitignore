@@ -43,3 +43,9 @@ miniapp/.vite/
 /image*.png
 /photo_*.jpg
 /photo_*.jpeg
+
+# Python-кэш ad-hoc скриптов
+__pycache__/
+
+# Случайное зеркало vendor-скиллов (рекурсивные копии, 40+ МБ) — не версионируем
+/.agents/

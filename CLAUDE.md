@@ -64,6 +64,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Mini App собирается внутри `infra/Dockerfile.nginx` (multi-stage: node build → nginx static) и раздаётся nginx из `/var/www/miniapp`.
 VPS-контейнеры объединены в bridge-сеть `max-comments-net`. Все контейнеры/volumes с префиксом `mc_`.
 
+> **Внимание:** `infra/nginx.conf` обслуживает не только `comment-max.ru` — на том же nginx живёт второй домен `legal72.ru` (proxy на контейнер `masterorg:4321`, чужой проект на этом же VPS). При правках nginx.conf не удалять этот server-блок и его upstream.
+
 ---
 
 ## Commands
@@ -499,6 +501,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS reply_notifications_enabled BOOLEAN N
 
 - **FREE**: базовые комментарии, ограниченное число каналов
 - **PRO** (по умолчанию 299 ₽/мес, настраивается через `app_settings`): аналитика, неограниченные каналы, инструменты модерации
+- **Приветственный триал**: любой новый пользователь при первом `/start` получает **7 дней PRO** (`grantSignupTrial` в `bot/src/handlers/onBotStarted.ts`, только если `plan='free'`). Приглашённый по реферальной ссылке дополнительно получает **+7 дней** при установке реферальной связи (`linkReferral` там же)
 - Платёжный провайдер: **T-Bank Acquiring** (подпись: SHA-256 от конкатенации отсортированных значений + Password)
 - Промо-коды: скидка в %, проверяются до создания платежа, `used_count` растёт только при CONFIRMED
 - **Реферальная программа** (доступна только при активном **купленном** PRO):

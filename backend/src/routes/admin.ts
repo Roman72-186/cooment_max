@@ -116,7 +116,7 @@ adminRouter.post('/set-admin', async (req, res) => {
 // ─── GET /api/admin/users ────────────────────────────────────────────────────
 
 adminRouter.get('/users', requireAuth, requireAdminUser, async (req, res) => {
-  const limit  = Math.min(parseInt(String(req.query.limit  ?? 50),  10) || 50,  200);
+  const limit  = Math.min(parseInt(String(req.query.limit  ?? 50),  10) || 50,  5000);
   const offset = Math.max(parseInt(String(req.query.offset ?? 0),   10) || 0,   0);
   try {
     const { rows } = await pool.query(`
@@ -140,7 +140,7 @@ adminRouter.get('/users', requireAuth, requireAdminUser, async (req, res) => {
 // ─── GET /api/admin/channels ─────────────────────────────────────────────────
 
 adminRouter.get('/channels', requireAuth, requireAdminUser, async (req, res) => {
-  const limit  = Math.min(parseInt(String(req.query.limit  ?? 50),  10) || 50,  200);
+  const limit  = Math.min(parseInt(String(req.query.limit  ?? 50),  10) || 50,  5000);
   const offset = Math.max(parseInt(String(req.query.offset ?? 0),   10) || 0,   0);
   try {
     const { rows } = await pool.query(`

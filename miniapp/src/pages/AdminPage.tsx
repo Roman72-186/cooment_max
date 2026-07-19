@@ -14,7 +14,7 @@ import {
 
 type Tab = 'users' | 'channels' | 'payments' | 'referrals' | 'settings';
 
-const ADMIN_PAGE_SIZE = 30;
+const ADMIN_PAGE_SIZE = 10;
 
 export function AdminPage() {
   const { setPage } = useAppStore();
