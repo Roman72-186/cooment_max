@@ -41,11 +41,19 @@ export async function onBotStarted(update: WebhookUpdate): Promise<void> {
   logger.info('Бот запущен пользователем', { userId, startParam });
 
   try {
+    const existingUser = await db.getUserByMaxId(userId);
+    const isNewUser     = !existingUser;
+
     const user = await db.upsertUser({
       max_user_id: userId,
       name: userName,
       username: undefined,
     });
+
+    // Приветственный триал: первый /start от нового пользователя даёт 7 дней PRO
+    if (isNewUser) {
+      await grantSignupTrial(user.id);
+    }
 
     // Пользователь нажал «Включить уведомления об ответах» в Mini App
     if (isNotifySetup) {
@@ -191,5 +199,23 @@ async function linkReferral(userId: number, refCode: string): Promise<void> {
     }
   } catch (err) {
     logger.warn('Не удалось установить реферальную связь', { userId, refCode, err });
+  }
+}
+
+// ─── Приветственный триал ───────────────────
+
+async function grantSignupTrial(userId: number): Promise<void> {
+  try {
+    await pool.query(
+      `UPDATE users
+          SET plan         = 'pro',
+              plan_expires = NOW() + INTERVAL '7 days'
+        WHERE id = $1
+          AND plan = 'free'`,
+      [userId]
+    );
+    logger.info('Выдан приветственный триал: 7 дней PRO', { userId });
+  } catch (err) {
+    logger.warn('Не удалось выдать приветственный триал', { userId, err });
   }
 }

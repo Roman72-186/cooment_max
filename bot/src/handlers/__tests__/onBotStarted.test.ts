@@ -6,6 +6,7 @@ vi.mock('../../api/maxClient.js', () => ({
 
 vi.mock('../../db/db.js', () => ({
   upsertUser: vi.fn(),
+  getUserByMaxId: vi.fn(),
   pool: { query: vi.fn() },
 }));
 
@@ -50,6 +51,8 @@ function makeMessageCreatedUpdate(userId = 55, name = 'Dana', text = '/start') {
 describe('onBotStarted', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // По умолчанию — уже существующий пользователь (не триггерит приветственный триал)
+    vi.mocked(db.getUserByMaxId).mockResolvedValue({ id: 1, referred_by: null } as any);
     vi.mocked(db.upsertUser).mockResolvedValue({ id: 1, referred_by: null } as any);
     vi.mocked(maxClient.sendMessageToUser).mockResolvedValue(undefined as any);
     vi.mocked(db.pool.query).mockResolvedValue({ rows: [] } as any);
@@ -157,6 +160,32 @@ describe('onBotStarted', () => {
     expect(db.pool.query).toHaveBeenCalledWith(
       expect.stringContaining("p.status = 'succeeded'"),
       ['ABC123', 5]
+    );
+  });
+
+  // ─── Приветственный триал ─────────────────────────────────────
+
+  it('выдаёт новому пользователю 7 дней PRO при первом /start', async () => {
+    vi.mocked(db.getUserByMaxId).mockResolvedValue(null);
+    vi.mocked(db.upsertUser).mockResolvedValue({ id: 7, referred_by: null } as any);
+
+    await onBotStarted(makeBotStartedUpdate(7, 'New') as any);
+
+    expect(db.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("plan_expires = NOW() + INTERVAL '7 days'"),
+      [7]
+    );
+  });
+
+  it('не выдаёт триал уже существующему пользователю', async () => {
+    vi.mocked(db.getUserByMaxId).mockResolvedValue({ id: 1, referred_by: null } as any);
+    vi.mocked(db.upsertUser).mockResolvedValue({ id: 1, referred_by: null } as any);
+
+    await onBotStarted(makeBotStartedUpdate(1, 'Old') as any);
+
+    expect(db.pool.query).not.toHaveBeenCalledWith(
+      expect.stringContaining("plan_expires = NOW() + INTERVAL '7 days'"),
+      expect.anything()
     );
   });
 });
