@@ -32,6 +32,12 @@ RUN npm install --omit=dev
 
 COPY --from=builder /app/bot/dist ./dist
 
+# Сертификат НУЦ Минцифры — без него исходящие HTTPS-запросы к platform-api2.max.ru
+# (домен MAX API с 19.07.2026) падают по TLS. apk/update-ca-certificates на хосте
+# сюда не доходит — доверие нужно внутри самого образа.
+COPY infra/certs/russian_trusted_ca_bundle.pem /app/certs/russian_trusted_ca_bundle.pem
+ENV NODE_EXTRA_CA_CERTS=/app/certs/russian_trusted_ca_bundle.pem
+
 USER node
 
 CMD ["node", "dist/bot/src/index.js"]

@@ -58,7 +58,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | Backend API | `mc_backend` | 3001 | REST API для Mini App |
 | PostgreSQL | `mc_postgres` | 5432 | Локальная БД внутри Docker |
 | Redis | `mc_redis` | 6379 | Зарезервирован (минимальное использование) |
-| Nginx | `mc_nginx` | custom | SSL termination + routing + раздача Mini App |
+| Nginx | `mc_nginx` | 80/443 | SSL termination + routing + раздача Mini App |
 
 **Всё на одном VPS** `comment-max.ru` (89.169.2.231). Никакого Vercel, никакого Supabase.
 Mini App собирается внутри `infra/Dockerfile.nginx` (multi-stage: node build → nginx static) и раздаётся nginx из `/var/www/miniapp`.
@@ -104,7 +104,7 @@ cd bot && npm run test:watch
 cd bot && npx vitest run src/handlers/__tests__/onBotAdded.test.ts
 ```
 
-Тесты используют `vi.mock` для всех внешних зависимостей (`maxClient`, `db`, `logger`, `config`) перед импортом тестируемого модуля. Хелперы вроде `makeSender()`/`makeUpdate()` строят тестовые объекты. Тесты покрывают: фильтрацию событий, определение owner через `getChatAdmins`, fallback к sender, создание/реактивацию канала.
+Тесты используют `vi.mock` для всех внешних зависимостей (`maxClient`, `db`, `logger`, `config`) перед импортом тестируемого модуля. Хелперы вроде `makeSender()`/`makeUpdate()` строят тестовые объекты. 4 тест-файла (~68 тестов) в `bot/src/handlers/__tests__/`: `onBotAdded`, `onBotRemoved`, `onBotStarted`, `onPostCreated` — фильтрация событий, определение owner через `getChatAdmins`, fallback к sender, создание/реактивация канала, публикация постов.
 
 ### Docker (prod + интеграционное тестирование)
 
@@ -130,7 +130,7 @@ docker exec -it mc_redis redis-cli -a <REDIS_PASSWORD>
 
 ### Deploy
 
-Сервер НЕ имеет git-репозитория. Деплой через одноразовые Python SFTP-скрипты в корне репо (создаются под конкретную задачу, после применения удаляются).
+Сервер НЕ имеет git-репозитория. Деплой через одноразовые Python SFTP-скрипты в корне репо (создаются под конкретную задачу, после применения удаляются). SSH-пароли в скрипты не хардкодить — брать из ENV/у владельца.
 
 **Паттерн деплоя** — каждый скрипт: `upload files → apply migration → rebuild containers`. Шаблон:
 ```python
@@ -164,11 +164,15 @@ bash infra/migrations/apply.sh
 ## Key Technical Constraints
 
 - **MAX API rate limit**: 30 req/sec — никогда не превышать в циклах или bulk-операциях
+- **MAX API домен**: `https://platform-api2.max.ru` (переменная `MAX_API_URL`, дефолт в `bot/src/utils/config.ts`). Старый `platform-api.max.ru` выведен из эксплуатации с 19.07.2026 — новый домен работает на сертификате **НУЦ Минцифры**, который не входит в доверенный список `node:20-alpine` по умолчанию. Внутри Docker-образов (`bot/Dockerfile`, `backend/Dockerfile`) это решено через `NODE_EXTRA_CA_CERTS` + `infra/certs/russian_trusted_ca_bundle.pem`; при добавлении нового сервиса, который тоже ходит в MAX API, не забыть повторить это в его Dockerfile
+- **`GET /chats` (bulk-список) deprecated с июня 2026.** `POST /api/channels/sync` (`backend/src/routes/channels.ts`) больше на него не полагается — точечно проверяет через `GET /chats/{id}` каждый уже известный БД канал владельца и реактивирует те, где бот всё ещё состоит (закрывает сценарий «бота удалили и добавили обратно, `bot_added` повторно не пришёл»). Обнаружение *совсем новых* каналов через API недоступно принципиально — такие каналы регистрируются через `bot_added` (`onBotAdded.ts`) или, если событие потерялось, автоматически при первом посте (`autoRegisterChannel` в `onPostCreated.ts`)
 - **`startapp` payload**: максимум 512 символов
-- **Webhook**: требует HTTPS (самоподписанные сертификаты MAX принимает)
+- **Webhook**: HTTPS на 443 с сертификатом доверенного ЦС — с 2026-05-25 MAX **не принимает** self-signed и HTTP. На проде — Let's Encrypt для `comment-max.ru` (следить за автопродлением). Подписка создаётся с `secret` из `WEBHOOK_SECRET`; входящие запросы проверяются по заголовку `X-Max-Bot-Api-Secret` в `bot/src/webhook.ts` (иначе 401)
+- **Дедупликация webhook**: `bot/src/webhook.ts` хранит последние 1000 `update_id` (TTL 5 мин) — MAX повторно доставляет события при таймауте; бот всегда отвечает 200 сразу, обработка асинхронная
+- **`POST /internal/update-post/:postId`** (bot) — мгновенное обновление кнопки поста при закрытии Mini App; вызывается backend'ом, доступен только внутри Docker-сети (nginx не проксирует)
 - **Комментарии**: максимум 2000 символов, threading через `parent_id`
 - **Приватные каналы**: максимум 1000 участников
-- Mini App ОБЯЗАТЕЛЬНО загружает `bridge.js` из `https://static.max.ru/static/js/bridge.js` **первым** в `index.html` — до всех остальных скриптов
+- Mini App ОБЯЗАТЕЛЬНО загружает MAX Bridge из `https://st.max.ru/js/max-web-app.js` **первым** в `index.html` — до всех остальных скриптов (старый `static.max.ru/static/js/bridge.js` из ранней документации устарел; в `miniapp/index.html` уже актуальный URL)
 - MAX Bridge auth: HMAC-SHA256 валидация `initData` — проверять при каждом запросе в `backend/src/middleware/auth.ts`
 - **Нет Vercel** — Mini App на том же VPS, раздаётся nginx из `/var/www/miniapp` (собирается в Dockerfile.nginx)
 - **rootDir: ".."** в `tsconfig.json` бота и backend — намеренно, чтобы TypeScript видел `../shared/` при компиляции. Из-за этого dist-путь: `dist/bot/src/index.js`, `dist/backend/src/index.js`
@@ -477,16 +481,17 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS reply_notifications_enabled BOOLEAN N
 | Переменная | Описание |
 |-----------|---------|
 | `MAX_BOT_TOKEN` | Токен бота MAX |
-| `WEBHOOK_URL` | HTTPS URL для webhook |
+| `WEBHOOK_URL` | HTTPS URL для webhook (`https://comment-max.ru/webhook`) |
+| `WEBHOOK_SECRET` | Секрет подписки MAX; проверяется по заголовку `X-Max-Bot-Api-Secret` |
 | `DATABASE_URL` | PostgreSQL connection string (локальный mc_postgres) |
 | `REDIS_URL` / `REDIS_PASSWORD` | Redis |
 | `MINI_APP_URL` | URL Mini App на VPS (https://comment-max.ru) |
-| `NGINX_HTTP_PORT` / `NGINX_HTTPS_PORT` | Нестандартные порты (не 80/443) |
+| `NGINX_HTTP_PORT` / `NGINX_HTTPS_PORT` | Порты nginx; на проде 80/443 (webhook MAX обязан быть на 443) |
 | `TBANK_TERMINAL_KEY` | T-Bank Acquiring TerminalKey |
 | `TBANK_PASSWORD` | T-Bank пароль для генерации подписи Token (SHA-256) |
 | `ADMIN_SECRET` | Секрет для заголовка `X-Admin-Secret` на bootstrap admin-роутах |
 
-Nginx использует нестандартные порты — уточнять у владельца VPS перед настройкой.
+На проде nginx слушает стандартные 80/443 (требование MAX webhook с 2026-05-25). `infra/setup-server.sh` и `infra/bootstrap.sh` больше не создают self-signed сертификаты.
 
 ---
 

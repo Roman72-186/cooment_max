@@ -2,8 +2,29 @@
 ## Все методы, объекты, примеры запросов и Mini App Bridge
 
 > **Источник:** dev.max.ru (официальная документация)  
-> **База:** `https://platform-api.max.ru`  
+> **База:** `https://platform-api2.max.ru` (см. «⚠️ Миграция домена» ниже)  
 > **Авторизация:** заголовок `Authorization: <token>` — передача токена через query-параметры **не поддерживается**
+
+---
+
+## ⚠️ Миграция домена (дедлайн 19.07.2026)
+
+Старый домен `platform-api.max.ru` использовал сертификат Let's Encrypt; из-за санкционных рисков глобальных CA MAX заранее переключил API на `platform-api2.max.ru` с сертификатом **НУЦ Минцифры** (Russian Trusted Root/Sub CA). Дедлайн перехода — **19 июля 2026**, старый домен перестаёт быть надёжным источником сертификатов после этой даты.
+
+- **Новая база:** `https://platform-api2.max.ru`
+- **Требование:** клиент, который ходит в API (curl, Node.js и т.д.), должен доверять НУЦ Минцифры — сертификат не входит в стандартный доверенный список ОС/рантайма.
+  - На сервере: `sudo cp *.crt /usr/local/share/ca-certificates/ && sudo update-ca-certificates` (Debian/Ubuntu) — но это работает только для процессов **на хосте**.
+  - **Внутри Docker-контейнеров** (наш случай — `mc_bot`/`mc_backend` на `node:20-alpine`) host-level `update-ca-certificates` не действует. Нужно скопировать бандл сертификатов в образ и указать `NODE_EXTRA_CA_CERTS` — см. `bot/Dockerfile` и `backend/Dockerfile`, бандл лежит в `infra/certs/russian_trusted_ca_bundle.pem`.
+- В проекте домен вынесен в `MAX_API_URL` (по умолчанию `https://platform-api2.max.ru`) — см. `bot/src/utils/config.ts`, `backend/src/routes/channels.ts`, `backend/src/routes/payments.ts`.
+- Скачать актуальные сертификаты: `https://gu-st.ru/content/lending/linux_russian_trusted_root_ca_pem.zip`, `https://gu-st.ru/content/lending/russian_trusted_sub_ca_pem.zip` — использовать `*_pem.crt` (RSA), не `*_gost_*` (Node/OpenSSL без GOST-движка их не проверит).
+
+## ⚠️ GET /chats (список чатов) — deprecated с июня 2026
+
+`GET /chats` (bulk-список всех чатов, где состоит бот) **больше не поддерживается** с июня 2026. Метод использовался в `POST /api/channels/sync` (`backend/src/routes/channels.ts`) для *обнаружения* каналов, где бот уже админ, но событие `bot_added` не пришло повторно. Официальная рекомендация — самостоятельно копить `chat_id` из событий (`bot_added`, `bot_started` и т.п.) в БД.
+
+**Что по-прежнему работает:** `GET /chats/{chatId}` и `GET /chats/{chatId}/members/admins` — точечные запросы по известному `chat_id` не затронуты. Значит реактивация уже известных БД каналов (по `chat_id`) остаётся рабочей — ломается только *обнаружение новых, неизвестных* каналов через bulk-список.
+
+**Статус в проекте (исправлено 19.07.2026):** `POST /api/channels/sync` (`backend/src/routes/channels.ts`) переписан — вместо `GET /chats?count=100` точечно проверяет через `GET /chats/{id}` каждый уже известный БД канал владельца и реактивирует те, где бот всё ещё состоит. Это закрывает основной сценарий — «MAX не шлёт `bot_added` при повторном добавлении бота в уже известный канал». Обнаружение *совсем новых* каналов (бот туда никогда не добавлялся, а `bot_added` почему-то не пришёл) через API недоступно принципиально — такие каналы подхватываются автоматически при первом посте через `autoRegisterChannel` в `bot/src/handlers/onPostCreated.ts`.
 
 ---
 
@@ -58,7 +79,7 @@ Authorization: YOUR_BOT_TOKEN
 - Long Polling — только для **разработки и тестирования**
 - Webhook — только для **production**
 - Нельзя использовать оба способа одновременно
-- Максимум **30 запросов в секунду (rps)** к `platform-api.max.ru`
+- Максимум **30 запросов в секунду (rps)** к `platform-api2.max.ru`
 
 ---
 
@@ -213,7 +234,7 @@ Inline-клавиатура крепится к сообщению через `I
 Возвращает информацию о боте по токену.
 
 ```bash
-curl -X GET "https://platform-api.max.ru/me" \
+curl -X GET "https://platform-api2.max.ru/me" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -254,8 +275,10 @@ curl -X GET "https://platform-api.max.ru/me" \
 
 ### GET /chats — Список всех чатов
 
+> ⚠️ **Deprecated с июня 2026** — метод больше не поддерживается. Собирайте `chat_id` самостоятельно из событий (`bot_added`, `bot_started` и т.п.) и храните в своей БД. Точечные `GET /chats/{chatId}` и `GET /chats/{chatId}/members/admins` не затронуты. См. «⚠️ Миграция домена» в начале документа.
+
 ```bash
-curl -X GET "https://platform-api.max.ru/chats" \
+curl -X GET "https://platform-api2.max.ru/chats" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -280,7 +303,7 @@ curl -X GET "https://platform-api.max.ru/chats" \
 ### GET /chats/{chatId} — Информация о чате
 
 ```bash
-curl -X GET "https://platform-api.max.ru/chats/123456" \
+curl -X GET "https://platform-api2.max.ru/chats/123456" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -289,7 +312,7 @@ curl -X GET "https://platform-api.max.ru/chats/123456" \
 ### PATCH /chats/{chatId} — Изменение чата
 
 ```bash
-curl -X PATCH "https://platform-api.max.ru/chats/123456" \
+curl -X PATCH "https://platform-api2.max.ru/chats/123456" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -303,7 +326,7 @@ curl -X PATCH "https://platform-api.max.ru/chats/123456" \
 ### DELETE /chats/{chatId} — Удалить чат
 
 ```bash
-curl -X DELETE "https://platform-api.max.ru/chats/123456" \
+curl -X DELETE "https://platform-api2.max.ru/chats/123456" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -314,7 +337,7 @@ curl -X DELETE "https://platform-api.max.ru/chats/123456" \
 Показывает пользователям, что бот набирает текст, отправляет фото и т.д.
 
 ```bash
-curl -X POST "https://platform-api.max.ru/chats/123456/actions" \
+curl -X POST "https://platform-api2.max.ru/chats/123456/actions" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "action": "typing_on" }'
@@ -325,7 +348,7 @@ curl -X POST "https://platform-api.max.ru/chats/123456/actions" \
 ### GET /chats/{chatId}/pin — Закреплённое сообщение
 
 ```bash
-curl -X GET "https://platform-api.max.ru/chats/123456/pin" \
+curl -X GET "https://platform-api2.max.ru/chats/123456/pin" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -342,7 +365,7 @@ curl -X GET "https://platform-api.max.ru/chats/123456/pin" \
 ### PUT /chats/{chatId}/pin — Закрепить сообщение
 
 ```bash
-curl -X PUT "https://platform-api.max.ru/chats/123456/pin" \
+curl -X PUT "https://platform-api2.max.ru/chats/123456/pin" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -356,7 +379,7 @@ curl -X PUT "https://platform-api.max.ru/chats/123456/pin" \
 ### DELETE /chats/{chatId}/pin — Открепить сообщение
 
 ```bash
-curl -X DELETE "https://platform-api.max.ru/chats/123456/pin" \
+curl -X DELETE "https://platform-api2.max.ru/chats/123456/pin" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -367,7 +390,7 @@ curl -X DELETE "https://platform-api.max.ru/chats/123456/pin" \
 ### GET /chats/{chatId}/members — Список участников
 
 ```bash
-curl -X GET "https://platform-api.max.ru/chats/123456/members" \
+curl -X GET "https://platform-api2.max.ru/chats/123456/members" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -401,7 +424,7 @@ curl -X GET "https://platform-api.max.ru/chats/123456/members" \
 ### POST /chats/{chatId}/members — Добавить участников
 
 ```bash
-curl -X POST "https://platform-api.max.ru/chats/123456/members" \
+curl -X POST "https://platform-api2.max.ru/chats/123456/members" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -414,7 +437,7 @@ curl -X POST "https://platform-api.max.ru/chats/123456/members" \
 ### DELETE /chats/{chatId}/members — Удалить участника
 
 ```bash
-curl -X DELETE "https://platform-api.max.ru/chats/123456/members" \
+curl -X DELETE "https://platform-api2.max.ru/chats/123456/members" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -427,7 +450,7 @@ curl -X DELETE "https://platform-api.max.ru/chats/123456/members" \
 ### GET /chats/{chatId}/members/me — Членство бота
 
 ```bash
-curl -X GET "https://platform-api.max.ru/chats/123456/members/me" \
+curl -X GET "https://platform-api2.max.ru/chats/123456/members/me" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -436,7 +459,7 @@ curl -X GET "https://platform-api.max.ru/chats/123456/members/me" \
 ### DELETE /chats/{chatId}/members/me — Выйти из чата
 
 ```bash
-curl -X DELETE "https://platform-api.max.ru/chats/123456/members/me" \
+curl -X DELETE "https://platform-api2.max.ru/chats/123456/members/me" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -445,7 +468,7 @@ curl -X DELETE "https://platform-api.max.ru/chats/123456/members/me" \
 ### GET /chats/{chatId}/members/admins — Список администраторов
 
 ```bash
-curl -X GET "https://platform-api.max.ru/chats/123456/members/admins" \
+curl -X GET "https://platform-api2.max.ru/chats/123456/members/admins" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -454,7 +477,7 @@ curl -X GET "https://platform-api.max.ru/chats/123456/members/admins" \
 ### POST /chats/{chatId}/members/admins — Назначить администратора
 
 ```bash
-curl -X POST "https://platform-api.max.ru/chats/123456/members/admins" \
+curl -X POST "https://platform-api2.max.ru/chats/123456/members/admins" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -467,7 +490,7 @@ curl -X POST "https://platform-api.max.ru/chats/123456/members/admins" \
 ### DELETE /chats/{chatId}/members/admins/{userId} — Снять права администратора
 
 ```bash
-curl -X DELETE "https://platform-api.max.ru/chats/123456/members/admins/111" \
+curl -X DELETE "https://platform-api2.max.ru/chats/123456/members/admins/111" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -480,7 +503,7 @@ curl -X DELETE "https://platform-api.max.ru/chats/123456/members/admins/111" \
 > Webhook требует HTTPS на порту **443**. Самоподписанные сертификаты **не поддерживаются** — нужен сертификат от доверенного CA или Let's Encrypt.
 
 ```bash
-curl -X POST "https://platform-api.max.ru/subscriptions" \
+curl -X POST "https://platform-api2.max.ru/subscriptions" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -526,7 +549,7 @@ curl -X POST "https://platform-api.max.ru/subscriptions" \
 ### GET /subscriptions — Проверить текущую подписку
 
 ```bash
-curl -X GET "https://platform-api.max.ru/subscriptions" \
+curl -X GET "https://platform-api2.max.ru/subscriptions" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -535,7 +558,7 @@ curl -X GET "https://platform-api.max.ru/subscriptions" \
 ### DELETE /subscriptions — Отписаться от Webhook
 
 ```bash
-curl -X DELETE "https://platform-api.max.ru/subscriptions" \
+curl -X DELETE "https://platform-api2.max.ru/subscriptions" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -544,7 +567,7 @@ curl -X DELETE "https://platform-api.max.ru/subscriptions" \
 ### GET /updates — Long Polling (только для разработки)
 
 ```bash
-curl -X GET "https://platform-api.max.ru/updates" \
+curl -X GET "https://platform-api2.max.ru/updates" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -560,7 +583,7 @@ curl -X GET "https://platform-api.max.ru/updates" \
 **Пример с параметрами:**
 
 ```bash
-curl -X GET "https://platform-api.max.ru/updates?limit=50&timeout=30&types=message_created,bot_started" \
+curl -X GET "https://platform-api2.max.ru/updates?limit=50&timeout=30&types=message_created,bot_started" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -580,7 +603,7 @@ curl -X GET "https://platform-api.max.ru/updates?limit=50&timeout=30&types=messa
 ### POST /messages — Отправить сообщение
 
 ```bash
-curl -X POST "https://platform-api.max.ru/messages?chat_id=123456" \
+curl -X POST "https://platform-api2.max.ru/messages?chat_id=123456" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -610,7 +633,7 @@ curl -X POST "https://platform-api.max.ru/messages?chat_id=123456" \
 **Пример — простое сообщение пользователю:**
 
 ```bash
-curl -X POST "https://platform-api.max.ru/messages?user_id=111" \
+curl -X POST "https://platform-api2.max.ru/messages?user_id=111" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{ "text": "Привет, пользователь!" }'
@@ -619,7 +642,7 @@ curl -X POST "https://platform-api.max.ru/messages?user_id=111" \
 **Пример — сообщение в чат с кнопкой-ссылкой:**
 
 ```bash
-curl -X POST "https://platform-api.max.ru/messages?chat_id=123456" \
+curl -X POST "https://platform-api2.max.ru/messages?chat_id=123456" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -640,7 +663,7 @@ curl -X POST "https://platform-api.max.ru/messages?chat_id=123456" \
 **Пример — сообщение с форматированием Markdown:**
 
 ```bash
-curl -X POST "https://platform-api.max.ru/messages?user_id=111" \
+curl -X POST "https://platform-api2.max.ru/messages?user_id=111" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -664,7 +687,7 @@ curl -X POST "https://platform-api.max.ru/messages?user_id=111" \
 > Можно редактировать только сообщения, отправленные **менее 24 часов назад**.
 
 ```bash
-curl -X PUT "https://platform-api.max.ru/messages?message_id=MSG_ID" \
+curl -X PUT "https://platform-api2.max.ru/messages?message_id=MSG_ID" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -675,7 +698,7 @@ curl -X PUT "https://platform-api.max.ru/messages?message_id=MSG_ID" \
 **Пример — прикрепить кнопку Comments к посту:**
 
 ```bash
-curl -X PUT "https://platform-api.max.ru/messages?message_id=MSG_ID" \
+curl -X PUT "https://platform-api2.max.ru/messages?message_id=MSG_ID" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -706,7 +729,7 @@ curl -X PUT "https://platform-api.max.ru/messages?message_id=MSG_ID" \
 ### GET /messages — Получить список сообщений
 
 ```bash
-curl -X GET "https://platform-api.max.ru/messages?chat_id=123456&count=20" \
+curl -X GET "https://platform-api2.max.ru/messages?chat_id=123456&count=20" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -715,7 +738,7 @@ curl -X GET "https://platform-api.max.ru/messages?chat_id=123456&count=20" \
 ### GET /messages/{messageId} — Получить сообщение по ID
 
 ```bash
-curl -X GET "https://platform-api.max.ru/messages/MSG_ID" \
+curl -X GET "https://platform-api2.max.ru/messages/MSG_ID" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -724,7 +747,7 @@ curl -X GET "https://platform-api.max.ru/messages/MSG_ID" \
 ### DELETE /messages — Удалить сообщение
 
 ```bash
-curl -X DELETE "https://platform-api.max.ru/messages?message_id=MSG_ID" \
+curl -X DELETE "https://platform-api2.max.ru/messages?message_id=MSG_ID" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -733,13 +756,15 @@ curl -X DELETE "https://platform-api.max.ru/messages?message_id=MSG_ID" \
 ### GET /videos/{videoToken} — Информация о видео
 
 ```bash
-curl -X GET "https://platform-api.max.ru/videos/VIDEO_TOKEN" \
+curl -X GET "https://platform-api2.max.ru/videos/VIDEO_TOKEN" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
 ---
 
 ## 10. UPLOADS — Загрузка файлов
+
+> В одном сообщении допускается не более **одного** вложения типа `audio` и не более **одного** вложения типа `file` (для `image`/`video` такого ограничения нет).
 
 ### Поддерживаемые форматы
 
@@ -755,7 +780,7 @@ curl -X GET "https://platform-api.max.ru/videos/VIDEO_TOKEN" \
 ### Шаг 1 — Получить URL для загрузки
 
 ```bash
-curl -X POST "https://platform-api.max.ru/uploads?type=image" \
+curl -X POST "https://platform-api2.max.ru/uploads?type=image" \
   -H "Authorization: YOUR_TOKEN"
 ```
 
@@ -794,7 +819,7 @@ curl -X POST "UPLOAD_URL_FROM_STEP_1" \
 
 ```bash
 # Шаг 1: получить URL
-curl -X POST "https://platform-api.max.ru/uploads?type=video" \
+curl -X POST "https://platform-api2.max.ru/uploads?type=video" \
   -H "Authorization: YOUR_TOKEN"
 # → { "url": "https://vu.mycdn.me/upload.do?...", "token": "VIDEO_TOKEN" }
 
@@ -805,7 +830,7 @@ curl -X POST "https://vu.mycdn.me/upload.do?..." \
 # → { "retval": 0 }
 
 # Шаг 3: отправить сообщение с видео
-curl -X POST "https://platform-api.max.ru/messages?user_id=111" \
+curl -X POST "https://platform-api2.max.ru/messages?user_id=111" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -826,7 +851,7 @@ curl -X POST "https://platform-api.max.ru/messages?user_id=111" \
 Используется после того, как пользователь нажал кнопку типа `callback`.
 
 ```bash
-curl -X POST "https://platform-api.max.ru/answers?callback_id=CALLBACK_ID" \
+curl -X POST "https://platform-api2.max.ru/answers?callback_id=CALLBACK_ID" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -850,7 +875,7 @@ curl -X POST "https://platform-api.max.ru/answers?callback_id=CALLBACK_ID" \
 **Пример — обновить сообщение и уведомить:**
 
 ```bash
-curl -X POST "https://platform-api.max.ru/answers?callback_id=CALLBACK_ID" \
+curl -X POST "https://platform-api2.max.ru/answers?callback_id=CALLBACK_ID" \
   -H "Authorization: YOUR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -1272,7 +1297,7 @@ def validate_max_init_data(init_data: str, bot_token: str) -> dict | None:
 
 | Параметр | Значение |
 |----------|---------|
-| Rate limit | **30 rps** к `platform-api.max.ru` (рекомендуем ≤ 25) |
+| Rate limit | **30 rps** к `platform-api2.max.ru` (рекомендуем ≤ 25) |
 | Текст сообщения | до **4000 символов** |
 | Описание бота | до **16000 символов** |
 | Команды бота | до **32** |
@@ -1382,4 +1407,4 @@ https://max.ru/:share?text=https%3A%2F%2Fexample.com
 
 ---
 
-*MAX API Complete Reference · Собрано из официальной документации dev.max.ru · Апрель 2026*
+*MAX API Complete Reference · Собрано из официальной документации dev.max.ru и открытых источников (habr.com, maxstat.ru) · Обновлено 19 июля 2026 — миграция домена platform-api2.max.ru и deprecation GET /chats*

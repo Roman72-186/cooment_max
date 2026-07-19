@@ -11,6 +11,9 @@ import crypto from 'crypto';
 
 export const paymentsRouter = Router();
 
+// С 19.07.2026 старый домен platform-api.max.ru выведен из эксплуатации
+// (миграция на сертификаты НУЦ Минцифры) — см. MAX_API_Complete_Reference.md
+const MAX_API    = process.env.MAX_API_URL ?? 'https://platform-api2.max.ru';
 const TBANK_API  = 'https://securepay.tinkoff.ru/v2';
 const PRO_PRICE  = parseInt(process.env.PRO_PRICE_RUB ?? '299', 10);  // рубли
 const PRO_DAYS   = 30;
@@ -34,7 +37,7 @@ async function notifyReferralReward(maxUserId: string | number, text: string): P
   const botToken = process.env.MAX_BOT_TOKEN;
   if (!botToken) return;
 
-  fetchWithTimeout(`https://platform-api.max.ru/messages?user_id=${maxUserId}`, {
+  fetchWithTimeout(`${MAX_API}/messages?user_id=${maxUserId}`, {
     method: 'POST',
     headers: { 'Authorization': botToken, 'Content-Type': 'application/json' },
     body: JSON.stringify({ text, format: 'markdown' }),

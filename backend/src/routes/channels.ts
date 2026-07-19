@@ -1,30 +1,31 @@
 // GET  /api/channels/:id/analytics  — аналитика канала
 // PATCH /api/channels/:id/settings  — настройки канала
-// POST /api/channels/sync           — найти каналы где бот-админ и зарегистрировать их
+// POST /api/channels/sync           — реактивировать уже известные каналы, где бот всё ещё админ
 import { Router } from 'express';
 import { pool } from '../db/db.js';
 import { requireAuth } from '../middleware/auth.js';
 import { fetchWithTimeout } from '../utils/fetchWithTimeout.js';
 import { PRO_REQUIRED_ERROR, isActivePro } from '../utils/plans.js';
 
-const MAX_API = 'https://platform-api.max.ru';
+// С 19.07.2026 старый домен platform-api.max.ru выведен из эксплуатации
+// (миграция на сертификаты НУЦ Минцифры) — см. MAX_API_Complete_Reference.md
+const MAX_API = process.env.MAX_API_URL ?? 'https://platform-api2.max.ru';
 const BOT_TOKEN = process.env.MAX_BOT_TOKEN ?? '';
 const CHANNEL_SYNC_CONCURRENCY = 5;
 
 export const channelsRouter = Router();
 
-async function isRequesterChannelAdmin(chatId: string, maxUserId: number): Promise<boolean> {
+// Точечная проверка: состоит ли бот всё ещё в конкретном чате.
+// GET /chats/{id} (в отличие от bulk-списка GET /chats) не deprecated —
+// см. «GET /chats (список чатов) — deprecated с июня 2026» в MAX_API_Complete_Reference.md.
+// Если бота удалили из чата, запрос вернёт ошибку (403/404) — тогда канал остаётся неактивным.
+async function isBotStillInChat(chatId: string): Promise<boolean> {
   try {
-    const adminsResp = await fetchWithTimeout(`${MAX_API}/chats/${chatId}/members/admins`, {
+    const resp = await fetchWithTimeout(`${MAX_API}/chats/${chatId}`, {
       headers: { Authorization: BOT_TOKEN },
       timeoutMs: 7000,
     });
-    if (!adminsResp.ok) return false;
-
-    const adminsData = await adminsResp.json() as {
-      members?: Array<{ user_id: number; is_owner?: boolean; role?: string }>;
-    };
-    return (adminsData.members ?? []).some(m => m.user_id === maxUserId);
+    return resp.ok;
   } catch {
     return false;
   }
@@ -83,10 +84,17 @@ async function getOwnedChannel(
 }
 
 // ─── POST /api/channels/sync ─────────────────────────────────────
-// Опрашивает MAX API — в каких каналах состоит бот.
-// Для каждого незарегистрированного канала проверяет через
-// GET /chats/{id}/members/admins — есть ли там запрашивающий пользователь.
-// Регистрирует только те каналы, где пользователь подтверждён как администратор.
+// GET /chats (bulk-список всех чатов бота) deprecated с июня 2026 — обнаружить
+// СОВСЕМ новый канал (бот туда никогда не добавлялся) через API больше нельзя.
+// Такие каналы регистрируются сами по себе через bot_added (onBotAdded.ts) или,
+// если это событие потерялось, автоматически при первом посте
+// (autoRegisterChannel в bot/src/handlers/onPostCreated.ts).
+//
+// Этот роут решает другую, всё ещё актуальную задачу: MAX не шлёт повторный
+// bot_added, если бота удалили из канала и добавили обратно — канал остаётся
+// is_active=false в БД, хотя бот уже снова там. Точечно проверяем каждый УЖЕ
+// известный канал владельца через GET /chats/{id} (не deprecated) и
+// реактивируем те, где бот всё ещё состоит.
 channelsRouter.post('/sync', requireAuth, async (req, res) => {
   const maxUser = req.maxUser!;
 
@@ -103,21 +111,7 @@ channelsRouter.post('/sync', requireAuth, async (req, res) => {
     const userId = Number(userRows[0].id);
     const hasActivePro = isActivePro(userRows[0]);
 
-    // 2. Запрашиваем список всех чатов бота
-    const maxResp = await fetchWithTimeout(`${MAX_API}/chats?count=100`, {
-      headers: { Authorization: BOT_TOKEN },
-      timeoutMs: 7000,
-    });
-    if (!maxResp.ok) {
-      res.status(502).json({ error: 'Ошибка запроса к MAX API' });
-      return;
-    }
-    const maxData = await maxResp.json() as {
-      chats?: Array<{ chat_id: string | number; type: string; title?: string }>;
-    };
-    const channelChats = (maxData.chats ?? []).filter(c => c.type === 'channel');
-    const channelChatIds = channelChats.map((c) => String(c.chat_id));
-
+    // 2. Все каналы владельца из БД (активные и неактивные)
     const { rows: existingOwnerChannels } = await pool.query<{
       id: number;
       max_chat_id: string;
@@ -128,119 +122,44 @@ channelsRouter.post('/sync', requireAuth, async (req, res) => {
         ORDER BY connected_at ASC, id ASC`,
       [userId]
     );
-    const existingOwnerChatIds = new Set(existingOwnerChannels.map(ch => String(ch.max_chat_id)));
+
+    // 3. Точечно проверяем каждый — бот всё ещё состоит в чате?
+    const membershipFlags = await mapWithConcurrency(
+      existingOwnerChannels,
+      CHANNEL_SYNC_CONCURRENCY,
+      async (ch) => isBotStillInChat(ch.max_chat_id)
+    );
+    const channelChatIds = existingOwnerChannels
+      .filter((_, idx) => membershipFlags[idx])
+      .map(ch => ch.max_chat_id);
+
+    let blockedByLimit = 0;
 
     if (hasActivePro) {
-      // PRO: активны все привязанные каналы, где бот всё ещё администратор.
+      // PRO: активны все каналы, где бот всё ещё состоит.
       await pool.query(
         `UPDATE channels
-            SET is_active = CASE
-              WHEN max_chat_id = ANY($2::text[]) THEN true
-              ELSE false
-            END
+            SET is_active = (max_chat_id = ANY($2::text[]))
           WHERE owner_id = $1`,
         [userId, channelChatIds]
       );
     } else {
-      // FREE: один канал разрешён, второй и следующие требуют PRO.
-      const freeChannel = existingOwnerChannels[0];
+      // FREE: активен только первый (по дате подключения) канал среди тех, где бот ещё состоит.
+      const firstStillActive = existingOwnerChannels.find(ch => channelChatIds.includes(ch.max_chat_id));
       await pool.query(
         `UPDATE channels
-            SET is_active = CASE
-              WHEN id = $2::bigint AND max_chat_id = ANY($3::text[]) THEN true
-              ELSE false
-            END
+            SET is_active = (id = $2::bigint)
           WHERE owner_id = $1`,
-        [userId, freeChannel?.id ?? null, channelChatIds]
+        [userId, firstStillActive?.id ?? null]
       );
-
-      if (existingOwnerChannels.length > 0) {
-        const unknownChannelChats = channelChats.filter(ch => !existingOwnerChatIds.has(String(ch.chat_id)));
-        const blockedFlags = await mapWithConcurrency(
-          unknownChannelChats,
-          CHANNEL_SYNC_CONCURRENCY,
-          async (ch) => isRequesterChannelAdmin(String(ch.chat_id), maxUser.user_id)
-        );
-        const blockedByLimit = blockedFlags.filter(Boolean).length;
-        const { rows: userChannels } = await getUserChannels(userId);
-        res.json({
-          registered: 0,
-          requires_pro: blockedByLimit > 0 || existingOwnerChannels.length > 1,
-          blocked_by_limit: blockedByLimit,
-          message: blockedByLimit > 0 || existingOwnerChannels.length > 1
-            ? 'Для подключения 2 и более каналов нужен активный тариф PRO'
-            : undefined,
-          channels: userChannels,
-        });
-        return;
-      }
-    }
-
-    // 3. Для каждого канала проверяем:
-    //    а) его нет в БД
-    //    б) запрашивающий пользователь есть в списке администраторов
-    const registeredFlags = await mapWithConcurrency(channelChats, CHANNEL_SYNC_CONCURRENCY, async (ch) => {
-      const chatId = String(ch.chat_id);
-
-      // Уже зарегистрированные каналы пользователя реактивируем выше одним UPDATE.
-      const { rows: existing } = await pool.query(
-        'SELECT id, owner_id FROM channels WHERE max_chat_id = $1',
-        [chatId]
-      );
-      if (existing.length > 0) return false;
-
-      const isAdmin = await isRequesterChannelAdmin(chatId, maxUser.user_id);
-      if (!isAdmin) return false;
-
-      // Регистрируем канал под текущим пользователем
-      const insertResult = await pool.query(
-        `INSERT INTO channels (max_chat_id, channel_name, owner_id, is_active, comments_enabled)
-         VALUES ($1, $2, $3, true, true)
-         ON CONFLICT (max_chat_id) DO NOTHING`,
-        [chatId, ch.title ?? chatId, userId]
-      );
-      return (insertResult.rowCount ?? 0) > 0;
-    });
-    let registered = registeredFlags.filter(Boolean).length;
-    let blockedByLimit = 0;
-
-    if (!hasActivePro && registered > 1) {
-      const ownerChannelsAfterRegister = await pool.query<{
-        id: number;
-        max_chat_id: string;
-      }>(
-        `SELECT id, max_chat_id
-           FROM channels
-          WHERE owner_id = $1
-          ORDER BY connected_at ASC, id ASC`,
-        [userId]
-      );
-      const allowedChannel = ownerChannelsAfterRegister.rows[0];
-      const extraChannels = ownerChannelsAfterRegister.rows.slice(1);
-      blockedByLimit = extraChannels.length;
-      await pool.query(
-        `UPDATE channels
-            SET is_active = CASE
-              WHEN id = $2::bigint AND max_chat_id = ANY($3::text[]) THEN true
-              ELSE false
-            END
-          WHERE owner_id = $1`,
-        [userId, allowedChannel?.id ?? null, channelChatIds]
-      );
-      if (extraChannels.length > 0) {
-        await pool.query(
-          'DELETE FROM channels WHERE owner_id = $1 AND id = ANY($2::bigint[])',
-          [userId, extraChannels.map(ch => ch.id)]
-        );
-      }
-      registered = allowedChannel ? 1 : 0;
+      blockedByLimit = Math.max(0, channelChatIds.length - (firstStillActive ? 1 : 0));
     }
 
     // 4. Возвращаем обновлённый список каналов пользователя
     const { rows: userChannels } = await getUserChannels(userId);
 
     res.json({
-      registered,
+      registered: 0, // discovery совсем новых каналов недоступен, см. комментарий выше
       requires_pro: blockedByLimit > 0,
       blocked_by_limit: blockedByLimit,
       message: blockedByLimit > 0

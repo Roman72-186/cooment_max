@@ -12,6 +12,8 @@
 >
 > This document is your complete mission briefing. You are running in the owner's terminal (VS Code / Claude Code). Read every section before writing a single line of code. The owner has: a verified Russian legal entity, a TEST bot token from business.max.ru, and a VPS server with other services already running. Your job is to build everything described here, in the exact order given in Section 11. Do not skip steps. Do not improvise. Update the Obsidian vault after every major step.
 
+> ⚠️ **HISTORICAL DOCUMENT — the project is already built and in production.** MAX API URLs here (`platform-api.max.ru`) are stale as of 2026-07-19 — the live domain migrated to `platform-api2.max.ru`. For current API behavior use `MAX_API_Complete_Reference.md`, not this file.
+
 ---
 
 ## Table of Contents

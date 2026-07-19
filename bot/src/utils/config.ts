@@ -41,6 +41,8 @@ export const config = {
   proDurationDays: parseInt(optionalEnv('PRO_DURATION_DAYS', '30'), 10),
 
   // MAX API
-  maxApiUrl:     'https://platform-api.max.ru',
+  // С 19.07.2026 старый домен platform-api.max.ru выведен из эксплуатации
+  // (миграция на сертификаты НУЦ Минцифры) — см. MAX_API_Complete_Reference.md
+  maxApiUrl:     optionalEnv('MAX_API_URL', 'https://platform-api2.max.ru'),
   maxApiRateLimit: 25, // запросов/сек (лимит 30, используем 25 для запаса)
 } as const;
