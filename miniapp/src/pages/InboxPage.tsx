@@ -89,10 +89,17 @@ export function InboxPage({ channelId, channelName }: InboxPageProps) {
           <>
             <div className="inbox-list">
               {items.slice(0, visibleCount).map((item) => (
-                <div
+                <button
                   key={item.id}
+                  type="button"
                   className="inbox-card"
-                  onClick={() => setPage({ id: 'comments', postId: item.post_id })}
+                  onClick={() => setPage({
+                    id: 'comments',
+                    postId: item.post_id,
+                    from: 'inbox',
+                    inboxChannelId: channelId,
+                    inboxChannelName: channelName,
+                  })}
                 >
                   <div className="inbox-card__header">
                     <div className="inbox-card__source">
@@ -109,7 +116,7 @@ export function InboxPage({ channelId, channelName }: InboxPageProps) {
                   </div>
                   <div className="inbox-card__author">{item.author_name}</div>
                   <p className="inbox-card__text">{getFeedPreview(item)}</p>
-                </div>
+                </button>
               ))}
             </div>
             {visibleCount < items.length && (

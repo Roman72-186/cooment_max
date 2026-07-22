@@ -392,7 +392,6 @@ export function CommentInput({ postId, onSent, mediaEnabled = false }: Props) {
           onKeyDown={handleKeyDown}
           rows={1}
           maxLength={2000}
-          autoFocus
           disabled={isBlocked}
         />
         <button

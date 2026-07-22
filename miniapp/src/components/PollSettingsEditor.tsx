@@ -61,8 +61,9 @@ export function PollSettingsEditor({ value, onChange }: Props) {
       {poll_enabled && (
         <div className="poll-settings__body">
           <div className="poll-settings__field">
-            <label className="poll-settings__label">Вопрос опроса</label>
+            <label className="poll-settings__label" htmlFor="poll-question">Вопрос опроса</label>
             <textarea
+              id="poll-question"
               className="settings-textarea"
               placeholder="Что думаете о..."
               maxLength={200}
@@ -76,16 +77,17 @@ export function PollSettingsEditor({ value, onChange }: Props) {
           </div>
 
           <div className="poll-settings__field">
-            <label className="poll-settings__label">
+            <div className="poll-settings__label" id="poll-options-label">
               Варианты ответа ({poll_options.length} / 5)
-            </label>
-            <div className="poll-options-list">
+            </div>
+            <div className="poll-options-list" role="group" aria-labelledby="poll-options-label">
               {poll_options.map((opt, idx) => (
                 <div key={idx} className="poll-option-row">
                   <input
                     type="text"
                     className="poll-option-input"
                     placeholder={`Вариант ${idx + 1}`}
+                    aria-label={`Вариант ответа ${idx + 1}`}
                     maxLength={50}
                     value={opt.text}
                     onChange={(e) => handleOptionChange(idx, e.target.value)}
@@ -95,7 +97,7 @@ export function PollSettingsEditor({ value, onChange }: Props) {
                     className="poll-option-remove"
                     onClick={() => handleRemoveOption(idx)}
                     disabled={poll_options.length <= 2}
-                    aria-label="Удалить вариант"
+                    aria-label={`Удалить вариант ${idx + 1}`}
                   >
                     ×
                   </button>

@@ -67,7 +67,7 @@ export function ReferralPage() {
     <div className="page">
       <header className="page-header">
         <div className="page-header-row">
-          <button className="btn-back" onClick={() => setPage({ id: 'dashboard' })}>←</button>
+          <button className="btn-back" onClick={() => setPage({ id: 'dashboard' })}>← Назад</button>
           <div>
             <h1 className="page-title">Рефералы</h1>
             <p className="page-subtitle">Ссылка, команда до 5 линии и баланс выплат</p>

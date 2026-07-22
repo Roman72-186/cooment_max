@@ -158,11 +158,27 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
     };
   }, []);
   const [contextOpen, setContextOpen] = useState(false);
+  // Управление фокусом для клавиатурных пользователей: при открытии меню — фокус на первый пункт,
+  // при закрытии — фокус возвращается на кнопку-триггер «⋮». wasOpenRef защищает от кражи
+  // фокуса при первом монтировании карточки (contextOpen === false изначально).
+  const wasOpenRef = useRef(false);
+  useEffect(() => {
+    if (contextOpen) {
+      const firstItem = contextMenuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)');
+      firstItem?.focus();
+      wasOpenRef.current = true;
+    } else if (wasOpenRef.current) {
+      wasOpenRef.current = false;
+      menuTriggerRef.current?.focus();
+    }
+  }, [contextOpen]);
   const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 100, left: 42 });
   const [deleting, setDeleting] = useState(false);
   const [banning, setBanning] = useState(false);
 
   const longPressTimer = useRef<number | null>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   // Свайп влево для ответа
   const cardInnerRef  = useRef<HTMLDivElement>(null);
@@ -172,6 +188,7 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
   const swipeDelta    = useRef(0);
   const swipeDecided  = useRef(false);       // направление определено
   const swipeHoriz    = useRef(false);       // true — горизонтальный свайп
+  const swipeFromEdge = useRef(false);       // жест начался у края экрана — не перехватываем (системный back-swipe)
 
   const bridgeUser = getBridgeUser();
   const currentMaxId = bridgeUser?.id ?? bridgeUser?.user_id;
@@ -247,6 +264,9 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
     return { top, left };
   }
 
+  // Ширина зоны у края экрана, где отдаём приоритет системному edge-swipe (закрытие/переход в MAX)
+  const EDGE_SWIPE_ZONE = 24;
+
   // ── Обработчики касаний ────────────────────────────────────────
   function handleTouchStart(e: React.TouchEvent) {
     swipeStartX.current  = e.touches[0].clientX;
@@ -254,14 +274,22 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
     swipeDelta.current   = 0;
     swipeDecided.current = false;
     swipeHoriz.current   = false;
+    swipeFromEdge.current =
+      swipeStartX.current < EDGE_SWIPE_ZONE ||
+      swipeStartX.current > window.innerWidth - EDGE_SWIPE_ZONE;
 
     // Долгое нажатие (500 мс) → открываем контекстное меню
     longPressTimer.current = window.setTimeout(() => {
       longPressTimer.current = null;
-      setMenuPos(computeMenuPos());
-      setContextOpen(true);
+      openContextMenu();
       navigator.vibrate?.(30);
     }, 500);
+  }
+
+  // Открыть меню действий (долгий тап / правый клик / кнопка «⋮» для клавиатуры)
+  function openContextMenu() {
+    setMenuPos(computeMenuPos());
+    setContextOpen(true);
   }
 
   function handleTouchMove(e: React.TouchEvent) {
@@ -277,8 +305,9 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
     // Определяем направление по первому значимому движению
     if (!swipeDecided.current) {
       if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      // Жест начался у края экрана — не перехватываем, отдаём системному back-swipe
       // Только свайп влево (dx < 0) и горизонталь доминирует
-      swipeHoriz.current   = dx < 0 && Math.abs(dx) > Math.abs(dy);
+      swipeHoriz.current   = !swipeFromEdge.current && dx < 0 && Math.abs(dx) > Math.abs(dy);
       swipeDecided.current = true;
     }
 
@@ -338,8 +367,7 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
   // Правый клик на десктопе
   function handleContextMenu(e: React.MouseEvent) {
     e.preventDefault();
-    setMenuPos(computeMenuPos());
-    setContextOpen(true);
+    openContextMenu();
   }
 
   // ── Реакция ───────────────────────────────────────────────────
@@ -408,6 +436,10 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
     addToast({ type: 'info', message: 'Ссылка скопирована' });
   }
 
+  // Осознанно без requestConfirm: удаление своего/чужого комментария в контексте чтения
+  // ленты — undo-toast (5 сек) даёт быстрее откатиться, чем модальное подтверждение.
+  // Confirm оставлен там, где отмены нет вовсе (бан) или действие административное
+  // и необратимое сразу (AdminPage: удаление пользователя/канала/промокода).
   async function handleDelete() {
     if (deleting) return;
     setDeleting(true);
@@ -498,6 +530,17 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
               </span>
               {isOwner && <span className="comment-admin-badge">Админ</span>}
               <span className="comment-time">{formatTime(comment.created_at)}</span>
+              <button
+                ref={menuTriggerRef}
+                type="button"
+                className="comment-menu-trigger"
+                onClick={openContextMenu}
+                aria-label="Действия с комментарием"
+                aria-haspopup="true"
+                aria-expanded={contextOpen}
+              >
+                ⋮
+              </button>
             </div>
 
             {/* Цитата — клик скроллит к оригинальному комментарию */}
@@ -551,7 +594,13 @@ export function CommentCard({ comment, parentComment, onDeleted, onRestoreCommen
 
         {/* Контекстное меню (тап по комментарию) */}
         {contextOpen && (
-          <div className="comment-context-menu" style={{ top: menuPos.top, left: menuPos.left }}>
+          <div
+            ref={contextMenuRef}
+            className="comment-context-menu"
+            style={{ top: menuPos.top, left: menuPos.left }}
+            role="menu"
+            onKeyDown={(e) => { if (e.key === 'Escape') setContextOpen(false); }}
+          >
             {/* Быстрые реакции */}
             <div className="context-emojis">
               {QUICK_EMOJIS.map((emoji) => {

@@ -16,7 +16,7 @@ export interface ConfirmRequest {
 export type Page =
   | { id: 'loading' }
   | { id: 'error' }
-  | { id: 'comments'; postId: number; highlightCommentId?: number }
+  | { id: 'comments'; postId: number; highlightCommentId?: number; from?: 'inbox'; inboxChannelId?: number; inboxChannelName?: string }
   | { id: 'onboarding' }
   | { id: 'dashboard' }
   | { id: 'referrals' }

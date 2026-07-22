@@ -14,6 +14,7 @@
   --accent:       #8b5cf6;
   --accent-glow:  rgba(139, 92, 246, 0.25);
   --accent-hover: #7c3aed;
+  --accent-secondary: #38bdf8; /* второй цвет для графиков (например «Просмотры» рядом с «Комментарии») */
   --stream-line:  linear-gradient(180deg, #9b6dff 0%, rgba(139, 92, 246, 0.16) 100%);
   /* --accent-text: осветлённый акцент — только для текста на тёмном фоне (контраст ~6.6:1) */
   --accent-text:  #c4b5fd;
@@ -23,7 +24,8 @@
   --text-secondary: #b0bed4;   /* ~7:1 */
   --text-muted:     #9aafc2;   /* ~5.9:1 ранее #8a99b0 = 3.8:1 */
 
-  --error:    #ef5350;
+  --error:      #ef5350; /* только для фонов/иконок — на --bg даёт ~3.8:1, ниже AA */
+  --error-text: #ff6b66; /* для текста ошибок на --bg — контраст ≥4.5:1 (AA) */
   --success:  #66bb6a;
   --pro-gold: #ffd54f;
   --warning:  #fbbf24;  /* для cooldown/предупреждений */
@@ -83,6 +85,16 @@
 .settings-textarea:focus-visible {
   outline: 2px solid var(--accent-text);
   outline-offset: -2px;
+}
+
+/* Пользователи с вестибулярными нарушениями/фотосенситивностью — гасим анимации */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -206,7 +218,7 @@ body {
 .notify-banner__actions {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-shrink: 0;
 }
 
@@ -452,7 +464,7 @@ body {
   margin-bottom: 12px;
   box-shadow: var(--nm-in-sm);
 }
-.alert--error   { background: rgba(239,83,80,0.1);  color: var(--error); }
+.alert--error   { background: rgba(239,83,80,0.1);  color: var(--error-text); }
 .alert--success { background: rgba(102,187,106,0.1); color: var(--success); }
 
 /* ═══════════════════════════════════════════════════════════
@@ -597,6 +609,28 @@ body {
   white-space: nowrap;
 }
 .comment-time   { font-size: 11px; color: var(--text-secondary); margin-left: auto; flex-shrink: 0; white-space: nowrap; }
+
+/* Кнопка «⋮» — клавиатурный/скринридерный доступ к меню действий
+   (долгий тап/свайп/правый клик остаются как есть, это дополнительный явный вход) */
+.comment-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: center; /* .comment-header использует align-items:baseline — центрируем кнопку явно */
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.comment-menu-trigger:hover  { background: var(--overlay-btn); color: var(--text-primary); }
+.comment-menu-trigger:active { background: var(--overlay-btn-hover); }
 
 /* Текст */
 .comment-text {
@@ -801,7 +835,7 @@ body {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 2px;
+  gap: 6px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border-subtle);
   margin-bottom: 6px;
@@ -811,7 +845,7 @@ body {
   border: none;
   font-size: 24px;
   cursor: pointer;
-  padding: 4px 6px;
+  padding: 6px 8px;
   border-radius: 10px;
   transition: background 0.12s, transform 0.1s;
   line-height: 1;
@@ -830,12 +864,15 @@ body {
 .context-actions {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
 .context-action-btn {
+  display: flex;
+  align-items: center;
   background: none;
   border: none;
   color: var(--text-primary);
+  min-height: var(--touch-sm);
   padding: 9px 12px;
   border-radius: 10px;
   cursor: pointer;
@@ -847,7 +884,7 @@ body {
 }
 .context-action-btn:hover    { background: rgba(255,255,255,0.06); }
 .context-action-btn:disabled { opacity: 0.4; cursor: default; }
-.context-action-btn--danger  { color: var(--error); }
+.context-action-btn--danger  { color: var(--error-text); }
 
 /* ═══════════════════════════════════════════════════════════
    ПОЛЕ ВВОДА КОММЕНТАРИЯ
@@ -860,7 +897,7 @@ body {
 
 .comment-input-error {
   font-size: 12px;
-  color: var(--error);
+  color: var(--error-text);
   padding: 4px 2px 6px;
 }
 
@@ -915,8 +952,8 @@ body {
   cursor: pointer;
   font-size: 13px;
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -982,16 +1019,19 @@ body {
 
 .attachment-preview-remove {
   position: absolute;
-  top: 3px;
-  right: 3px;
-  width: 24px;
-  height: 24px;
+  top: 2px;
+  right: 2px;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   border-radius: 50%;
   background: rgba(10,12,24,0.76);
   color: #fff;
   font-family: inherit;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
 }
@@ -1127,6 +1167,7 @@ body {
 /* Кулдаун — оранжевый с цифрой обратного отсчёта */
 .send-btn--cooldown {
   background: var(--cooldown-color);
+  color: #1a1a2e; /* тёмный текст на оранжевом фоне — контраст ≥7:1 (было ~2.9:1 с --text-primary) */
   box-shadow: none;
   cursor: not-allowed;
   font-size: 13px;
@@ -1156,9 +1197,10 @@ body {
   align-items: center;
   gap: 12px;
   padding: 48px 24px;
-  color: var(--error);
+  color: var(--error-text);
   text-align: center;
 }
+.error-state__icon { font-size: 40px; line-height: 1; }
 .error-state button {
   background: var(--accent);
   color: var(--text-primary);
@@ -1264,7 +1306,15 @@ body {
 .onboarding__actions { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 
 .onboarding__legal { margin-top: 16px; font-size: 12px; color: var(--text-muted); }
-.onboarding__legal span { cursor: pointer; text-decoration: underline; color: var(--text-secondary); }
+.onboarding__legal button {
+  border: none;
+  background: none;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  color: var(--text-secondary);
+}
 
 .onboarding__bot-link {
   display: flex;
@@ -1396,7 +1446,7 @@ body {
   text-decoration: none;
 }
 .channel-card__status { font-size: 12px; color: var(--success); }
-.channel-card__status--off { color: var(--error); }
+.channel-card__status--off { color: var(--error-text); }
 
 .channel-card__stats { display: flex; gap: 8px; margin-bottom: 14px; }
 
@@ -1944,13 +1994,13 @@ body {
 }
 .settings-section__title { font-size: 15px; font-weight: 600; color: var(--text-primary); }
 .settings-section__hint  { font-size: 13px; color: var(--text-secondary); line-height: 1.5; }
-.settings-hint--warn     { color: var(--error); }
+.settings-hint--warn     { color: var(--error-text); }
 
 /* Статусный бейдж секции */
 .settings-status         { font-size: 12px; font-weight: 500; }
 .settings-status--saving { color: var(--text-muted); }
 .settings-status--saved  { color: var(--success); }
-.settings-status--error  { color: var(--error); }
+.settings-status--error  { color: var(--error-text); }
 
 /* Тогл-ряд: label+state слева, toggle справа */
 .toggle-row {
@@ -2242,7 +2292,7 @@ body {
 .admin-card__name  { font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .admin-card__meta  { font-size: 12px; color: var(--text-muted); margin-top: 3px; }
 .admin-card__meta--secondary { color: var(--text-secondary); }
-.admin-card__actions { display: flex; gap: 6px; flex-shrink: 0; }
+.admin-card__actions { display: flex; gap: 8px; flex-shrink: 0; }
 .admin-card--referral { align-items: flex-start; }
 
 .admin-channel-link {
@@ -2266,7 +2316,7 @@ body {
 }
 .admin-badge--admin { background: rgba(139,92,246,0.15); color: var(--accent); }
 .admin-badge--on    { background: rgba(102,187,106,0.15); color: var(--success); }
-.admin-badge--off   { background: rgba(239,83,80,0.1);   color: var(--error); }
+.admin-badge--off   { background: rgba(239,83,80,0.1);   color: var(--error-text); }
 
 .admin-pro  { color: var(--pro-gold); font-weight: 600; }
 .admin-free { color: var(--text-muted); }
@@ -2294,7 +2344,7 @@ body {
   font-weight: 700;
 }
 .referral-balance--negative {
-  color: var(--error) !important;
+  color: var(--error-text) !important;
 }
 .referral-adjust-form {
   display: grid;
@@ -2304,7 +2354,7 @@ body {
 }
 .referral-adjust-form__actions {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
 }
 .referral-adjustments-log {
@@ -2362,7 +2412,7 @@ body {
 .admin-btn--danger {
   min-height: var(--touch-sm);
   background: rgba(239,83,80,0.12);
-  color: var(--error);
+  color: var(--error-text);
   border: none;
   border-radius: 10px;
   padding: 8px 12px;
@@ -2453,7 +2503,13 @@ body {
 .inbox-list { display: flex; flex-direction: column; gap: 8px; }
 
 .inbox-card {
+  display: block;
+  width: 100%;
+  border: none;
+  text-align: left;
+  font-family: inherit;
   background: var(--bg);
+  color: inherit;
   border-radius: 16px;
   padding: 14px;
   box-shadow: var(--nm-out-sm);
@@ -2575,6 +2631,25 @@ body {
   border-top: 1px solid rgba(255,255,255,0.07);
   padding-top: 20px;
 }
+
+/* Разбивка «откуда пришли пользователи» — вкладка «Аналитика» */
+.acquisition-bars { display: flex; flex-direction: column; gap: 10px; padding: 8px 0; }
+.acquisition-bar-row { display: flex; align-items: center; gap: 10px; }
+.acquisition-bar-row__label { width: 170px; flex-shrink: 0; font-size: 13px; color: var(--text-secondary); }
+.acquisition-bar-row__value { min-width: 56px; flex-shrink: 0; font-size: 13px; text-align: right; }
+.acquisition-bar-track {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--overlay-btn);
+  overflow: hidden;
+}
+.acquisition-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
 .admin-settings__input {
   background: var(--bg-raised);
   border: 1px solid rgba(255,255,255,0.1);
@@ -2586,7 +2661,7 @@ body {
   width: 100%;
   box-sizing: border-box;
 }
-.admin-settings__input:focus { outline: none; border-color: var(--accent-text); }
+.admin-settings__input:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; border-color: var(--accent-text); }
 .admin-settings__hint { font-size: 12px; color: var(--text-secondary); text-align: center; }
 
 /* ═══════════════════════════════════════════════════════════
@@ -2605,7 +2680,7 @@ body {
   padding: 8px 12px;
   outline: none;
 }
-.admin-filter-input:focus { border-color: var(--accent-text); }
+.admin-filter-input:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; border-color: var(--accent-text); }
 .admin-filter-select {
   background: var(--bg-raised);
   border: 1px solid rgba(255,255,255,0.1);
@@ -2617,6 +2692,7 @@ body {
   cursor: pointer;
   outline: none;
 }
+.admin-filter-select:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; border-color: var(--accent-text); }
 
 /* ═══════════════════════════════════════════════════════════
    ИСТОРИЯ ПЛАТЕЖЕЙ В АДМИНКЕ
@@ -2692,7 +2768,7 @@ body {
 .pricing-error { margin-top: 8px; }
 .promo-price-original { text-decoration: line-through; color: var(--text-secondary); }
 .promo-price-final    { color: var(--success); font-weight: 600; }
-.promo-error          { color: var(--error); font-size: 13px; }
+.promo-error          { color: var(--error-text); font-size: 13px; }
 
 /* ═══════════════════════════════════════════════════════════
    КАТЕГОРИИ СТОП-СЛОВ
@@ -2887,17 +2963,21 @@ body {
 .poll-option-input:focus {
   border-color: var(--accent);
 }
+.poll-option-input:focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: -2px;
+}
 
 .poll-option-input::placeholder {
   color: var(--text-muted);
 }
 
 .poll-option-remove {
-  width: 28px;
-  height: 28px;
+  width: 36px;
+  height: 36px;
   flex-shrink: 0;
   background: rgba(239, 83, 80, 0.15);
-  color: var(--error);
+  color: var(--error-text);
   border: none;
   border-radius: 8px;
   font-size: 18px;
@@ -2961,7 +3041,7 @@ body {
   transition: color 0.2s;
 }
 .input-counter--warn     { color: var(--warning); }
-.input-counter--critical { color: var(--error); font-weight: 600; }
+.input-counter--critical { color: var(--error-text); font-weight: 600; }
 
 /* ── Screen reader only (для ARIA live regions) ── */
 .sr-only {
@@ -3031,6 +3111,23 @@ body {
   flex-shrink: 0;
 }
 
+.toast__close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  margin-left: 2px;
+}
+.toast__close:hover { background: var(--overlay-btn); color: var(--text-primary); }
+
 @keyframes toast-in {
   from { opacity: 0; transform: translateY(-12px) scale(0.95); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
@@ -3065,7 +3162,7 @@ body {
 
 /* Критический лимит стоп-слов */
 .settings-hint--critical {
-  color: var(--error);
+  color: var(--error-text);
   font-weight: 600;
 }
 

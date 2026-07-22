@@ -60,7 +60,7 @@ export function OnboardingPage() {
         {step === 'welcome' && (
           <>
             <div className="onboarding__icon">💬</div>
-            <h2 className="onboarding__title">Комментарии для MAX</h2>
+            <h1 className="onboarding__title">Комментарии для MAX</h1>
             <p className="onboarding__text">
               Добавьте бота в свой канал — и каждый пост получит кнопку
               «Комментарии». Подписчики смогут общаться прямо в MAX.
@@ -75,13 +75,13 @@ export function OnboardingPage() {
               Подключить канал
             </button>
             <div className="onboarding__legal">
-              <span onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/offer')}>
+              <button type="button" onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/offer')}>
                 Оферта
-              </span>
+              </button>
               {' · '}
-              <span onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/privacy')}>
+              <button type="button" onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/privacy')}>
                 Политика ПДн
-              </span>
+              </button>
             </div>
           </>
         )}
@@ -89,7 +89,7 @@ export function OnboardingPage() {
         {step === 'instruction' && (
           <>
             <div className="onboarding__icon">📋</div>
-            <h2 className="onboarding__title">Как подключить</h2>
+            <h1 className="onboarding__title">Как подключить</h1>
             <ol className="onboarding__steps">
               <li>Скопируйте ID бота:
                 <div className="onboarding__bot-link">
@@ -141,7 +141,7 @@ export function OnboardingPage() {
         {step === 'success' && (
           <>
             <div className="onboarding__icon">🎉</div>
-            <h2 className="onboarding__title">Канал подключён!</h2>
+            <h1 className="onboarding__title">Канал подключён!</h1>
             <p className="onboarding__text">
               Бот активирован. Теперь каждый новый пост в вашем канале
               получит кнопку «💬 Комментарии».

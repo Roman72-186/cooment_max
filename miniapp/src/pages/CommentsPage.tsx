@@ -15,10 +15,13 @@ const NOTIFY_BANNER_KEY = 'notify_prompt_dismissed';
 interface Props {
   postId: number;
   highlightCommentId?: number;
+  from?: 'inbox';
+  inboxChannelId?: number;
+  inboxChannelName?: string;
 }
 
-export function CommentsPage({ postId, highlightCommentId }: Props) {
-  const { comments, loading, error, setComments, addComment, removeComment, setLoading, setError, user, setUser } = useAppStore();
+export function CommentsPage({ postId, highlightCommentId, from, inboxChannelId, inboxChannelName }: Props) {
+  const { comments, loading, error, setComments, addComment, removeComment, setLoading, setError, user, setUser, setPage } = useAppStore();
   const contentRef      = useRef<HTMLDivElement>(null);
   const prevCountRef    = useRef(0);      // отслеживаем рост числа комментариев
   const shouldScroll    = useRef(false);  // флаг: нужен скролл после следующего рендера
@@ -100,11 +103,19 @@ export function CommentsPage({ postId, highlightCommentId }: Props) {
     return () => el.removeEventListener('scroll', onScroll);
   }, []); // contentRef стабилен — пустой депс OK
 
-  // Инициируем обновление кнопки и сразу закрываем — не ждём ответа сервера
+  // Инициируем обновление кнопки и сразу закрываем — не ждём ответа сервера.
+  // Только для fast-path входа (deep link из канала MAX) — здесь корректно закрыть весь Mini App.
   const handleClose = useCallback(() => {
     refreshPostCounter(postId); // fire-and-forget, ошибки поглощены внутри
     window.WebApp?.close();
   }, [postId]);
+
+  // Возврат во «Входящие» — сюда попадают открыв пост изнутри Mini App, а не по deep link,
+  // поэтому закрывать всё приложение (WebApp.close) было бы неверно — просто уходим на предыдущий экран.
+  const handleBackToInbox = useCallback(() => {
+    refreshPostCounter(postId);
+    setPage({ id: 'inbox', channelId: inboxChannelId, channelName: inboxChannelName });
+  }, [postId, setPage, inboxChannelId, inboxChannelName]);
 
   // Удалить комментарий из локального стейта (оптимистично, без перезагрузки)
   const handleDeleted = useCallback((id: number) => {
@@ -223,7 +234,18 @@ export function CommentsPage({ postId, highlightCommentId }: Props) {
       </div>
 
       <header className="page-header">
-        <h1 className="page-title">Комментарии</h1>
+        <div className="page-header-row">
+          {from === 'inbox' ? (
+            <button className="btn-back" onClick={handleBackToInbox}>
+              ← Входящие
+            </button>
+          ) : (
+            <button className="btn-close" onClick={handleClose} aria-label="Закрыть комментарии">
+              ✕
+            </button>
+          )}
+          <h1 className="page-title">Комментарии</h1>
+        </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span className="comment-count">{comments.length}</span>
           {user && (

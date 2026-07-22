@@ -212,7 +212,7 @@ export function PricingPage() {
                     ? <div className="promo-price-final promo-price-final--note">
                         Скидка {promoResult.discount_percent}% применена
                       </div>
-                    : <div className="promo-error">{promoResult.error}</div>
+                    : <div className="promo-error" role="alert">{promoResult.error}</div>
                 )}
                 <button
                   className="btn btn--primary"
@@ -222,7 +222,7 @@ export function PricingPage() {
                   {paying ? 'Открываю...' : `Оформить PRO — ${finalPrice} ₽`}
                 </button>
                 {payError && (
-                  <div className="alert alert--error pricing-error">
+                  <div className="alert alert--error pricing-error" role="alert">
                     {payError}
                   </div>
                 )}

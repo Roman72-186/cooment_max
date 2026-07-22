@@ -108,14 +108,14 @@ describe('onBotStarted', () => {
     expect(text).toContain('Иван');
   });
 
-  it('welcome message кратко описывает возможности и различия тарифов', async () => {
+  it('welcome message объясняет аналитику, управление комментариями и антиспам', async () => {
     await onBotStarted(makeBotStartedUpdate(1, 'Иван') as any);
     const text = vi.mocked(maxClient.sendMessageToUser).mock.calls[0][1];
     expect(text).toContain('Аналитика');
-    expect(text).toContain('Опросы');
-    expect(text).toContain('Антифрод и модерация');
-    expect(text).toContain('FREE');
-    expect(text).toContain('PRO');
+    expect(text).toContain('Управлять комментариями');
+    expect(text).toContain('антиспам');
+    expect(text).toContain('стоп-слова');
+    expect(text).toContain('Как начать');
   });
 
   it('кнопка содержит open_app с правильным URL', async () => {

@@ -25,26 +25,32 @@ export function ToastContainer() {
 function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: (id: string) => void }) {
   const ref = useRef<HTMLDivElement>(null);
 
+  // Ошибки держим дольше по умолчанию — текст непредсказуемой длины приходит от сервера
+  const defaultDuration = toast.type === 'error' ? 5500 : 3000;
+
   useEffect(() => {
     if (toast.duration === 0) return;
     const timer = setTimeout(() => {
       ref.current?.classList.add('toast--exit');
       setTimeout(() => onRemove(toast.id), 180);
-    }, toast.duration ?? 3000);
+    }, toast.duration ?? defaultDuration);
     return () => clearTimeout(timer);
-  }, [toast.id, toast.duration, onRemove]);
+  }, [toast.id, toast.duration, defaultDuration, onRemove]);
 
   const icon = { success: '✓', error: '✕', info: 'ℹ', warning: '⚠' }[toast.type];
 
   return (
     <div ref={ref} className={`toast toast--${toast.type}`} role={toast.type === 'error' ? 'alert' : undefined}>
-      <span className="toast__icon">{icon}</span>
+      <span className="toast__icon" aria-hidden="true">{icon}</span>
       <span className="toast__message">{toast.message}</span>
       {toast.action && (
         <button className="toast__action" onClick={() => { toast.action!.onClick(); onRemove(toast.id); }}>
           {toast.action.label}
         </button>
       )}
+      <button className="toast__close" onClick={() => onRemove(toast.id)} aria-label="Закрыть уведомление">
+        ✕
+      </button>
     </div>
   );
 }

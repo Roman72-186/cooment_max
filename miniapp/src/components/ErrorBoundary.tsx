@@ -26,17 +26,12 @@ export class ErrorBoundary extends React.Component<React.PropsWithChildren, Stat
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: 32, textAlign: 'center' }}>
-          <div style={{ fontSize: 40 }}>⚠️</div>
-          <p style={{ color: 'var(--text-secondary)', margin: '12px 0' }}>
-            Что-то пошло не так.<br />Попробуйте перезагрузить приложение.
-          </p>
-          <button
-            className="btn btn--primary"
-            onClick={() => window.location.reload()}
-          >
-            Обновить
-          </button>
+        <div className="page page--center">
+          <div className="error-state" role="alert">
+            <span className="error-state__icon" aria-hidden="true">⚠️</span>
+            <span>Что-то пошло не так.<br />Попробуйте перезагрузить приложение.</span>
+            <button onClick={() => window.location.reload()}>Обновить</button>
+          </div>
         </div>
       );
     }

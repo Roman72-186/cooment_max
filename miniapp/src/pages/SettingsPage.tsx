@@ -481,7 +481,26 @@ export function SettingsPage({ channelId }: Props) {
     });
   };
 
-  if (!channel) return null;
+  if (!channel) {
+    return (
+      <div className="page">
+        <header className="page-header">
+          <div className="page-header-row">
+            <button className="btn-back" onClick={() => setPage({ id: 'dashboard' })}>
+              ← Назад
+            </button>
+            <h1 className="page-title">Настройки</h1>
+          </div>
+        </header>
+        <main className="page-content">
+          <div className="error-state" role="alert">
+            <span>Канал не найден или недоступен</span>
+            <button onClick={() => setPage({ id: 'dashboard' })}>К списку каналов</button>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="page">
@@ -513,7 +532,7 @@ export function SettingsPage({ channelId }: Props) {
           {/* ── Комментарии ───────────────────────────────────────── */}
           <div className="settings-section">
             <div className="settings-section__title-row">
-              <div className="settings-section__title">Комментарии</div>
+              <h2 className="settings-section__title">Комментарии</h2>
               <SectionBadge state={stComments} />
             </div>
             <label className={`toggle-row ${stComments === 'saving' ? 'toggle-row--disabled' : ''}`}>
@@ -542,7 +561,7 @@ export function SettingsPage({ channelId }: Props) {
               {/* ── Уведомления ───────────────────────────────────────── */}
               <div className="settings-section">
                 <div className="settings-section__title-row">
-                  <div className="settings-section__title">Уведомления</div>
+                  <h2 className="settings-section__title">Уведомления</h2>
                   <SectionBadge state={stNotifications} />
                 </div>
                 <label className={`toggle-row ${stNotifications === 'saving' ? 'toggle-row--disabled' : ''}`}>
@@ -568,7 +587,7 @@ export function SettingsPage({ channelId }: Props) {
               {/* ── Реакции под постами ────────────────────────────────── */}
               <div className={`settings-section${reactionsDirty ? ' settings-section--dirty' : ''}`}>
                 <div className="settings-section__title-row">
-                  <div className="settings-section__title">Реакции под постами</div>
+                  <h2 className="settings-section__title">Реакции под постами</h2>
                   <SectionBadge state={stReactions} />
                 </div>
                 <label className="toggle-row">
@@ -625,7 +644,7 @@ export function SettingsPage({ channelId }: Props) {
         {/* ── Стоп-слова ─────────────────────────────────────────── */}
         {isPro && <div ref={bannedSettingsRef} className={`settings-section settings-anchor${bannedDirty ? ' settings-section--dirty' : ''}`}>
           <div className="settings-section__title-row">
-            <div className="settings-section__title">Стоп-слова</div>
+            <h2 className="settings-section__title">Стоп-слова</h2>
             <SectionBadge state={stBanned} errorText="Максимум 100 слов" />
           </div>
           <p className="settings-section__hint">
@@ -645,9 +664,9 @@ export function SettingsPage({ channelId }: Props) {
           <div className={`settings-section__hint${wordCount >= 100 ? ' settings-hint--critical' : wordCount >= 80 ? ' settings-hint--warn' : ''}`}>
             {wordCount} / 100 слов{wordCount >= 80 && wordCount < 100 ? ' — приближается лимит' : ''}
           </div>
-          {/* Кнопка быстрого старта */}
-          <button type="button" className="btn btn--recommended" onClick={applyRecommended} disabled={!isPro}>
-            {isPro ? `🛡 Добавить рекомендуемые (${RECOMMENDED_WORDS.length})` : 'PRO: включить авто-модерацию'}
+          {/* Кнопка быстрого старта. Блок целиком рендерится только при isPro — веток для FREE тут нет */}
+          <button type="button" className="btn btn--recommended" onClick={applyRecommended}>
+            🛡 Добавить рекомендуемые ({RECOMMENDED_WORDS.length})
           </button>
 
           {/* Категории стоп-слов */}
@@ -692,7 +711,7 @@ export function SettingsPage({ channelId }: Props) {
         {/* ── Опрос под постами ─────────────────────────────────── */}
         {isPro && <div ref={pollSettingsRef} className={`settings-section settings-anchor${pollDirty ? ' settings-section--dirty' : ''}`}>
           <div className="settings-section__title-row">
-            <div className="settings-section__title">Опрос</div>
+            <h2 className="settings-section__title">Опрос</h2>
             <SectionBadge state={stPoll} errorText="Заполните вопрос и 2+ варианта" />
           </div>
           <p className="settings-section__hint">
@@ -705,7 +724,7 @@ export function SettingsPage({ channelId }: Props) {
 
         {/* ── Опасная зона ───────────────────────────────────────── */}
         <div ref={dangerSettingsRef} className="settings-section settings-section--danger settings-anchor">
-          <div className="settings-section__title">Опасная зона</div>
+          <h2 className="settings-section__title">Опасная зона</h2>
           <p className="settings-section__hint">
             Чтобы просто остановить новые комментарии, удалите бота из администраторов канала в MAX.
             Если канал больше не нужен в панели, удалите его ниже.

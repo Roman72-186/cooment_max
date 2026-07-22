@@ -123,25 +123,27 @@ export function App() {
 
     case 'error':
       content = (
-        <div className="page page--center" style={{ gap: 16, padding: 32, textAlign: 'center' }}>
-          <div style={{ fontSize: 40 }}>⚠️</div>
-          <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
-            Не удалось загрузить данные.<br />Возможно, сервис временно недоступен.
-          </p>
-          <button
-            className="btn btn--primary"
-            onClick={() => window.location.reload()}
-            style={{ marginTop: 8 }}
-          >
-            Попробовать снова
-          </button>
+        <div className="page page--center">
+          <div className="error-state" role="alert">
+            <span className="error-state__icon" aria-hidden="true">⚠️</span>
+            <span>Не удалось загрузить данные.<br />Возможно, сервис временно недоступен.</span>
+            <button onClick={() => window.location.reload()}>Попробовать снова</button>
+          </div>
         </div>
       );
       showFooter = false;
       break;
 
     case 'comments':
-      content = <CommentsPage postId={page.postId} highlightCommentId={page.highlightCommentId} />;
+      content = (
+        <CommentsPage
+          postId={page.postId}
+          highlightCommentId={page.highlightCommentId}
+          from={page.from}
+          inboxChannelId={page.inboxChannelId}
+          inboxChannelName={page.inboxChannelName}
+        />
+      );
       showFooter = false;
       break;
 
@@ -159,20 +161,14 @@ export function App() {
     <>
       {content}
       {showFooter && (
-        <footer style={{ padding: '12px 16px 20px', textAlign: 'center', fontSize: '12px', color: '#aaa' }}>
-          <span
-            style={{ color: '#aaa', cursor: 'pointer', textDecoration: 'underline' }}
-            onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/offer')}
-          >
+        <footer className="onboarding__legal" style={{ padding: '12px 16px 20px', textAlign: 'center', marginTop: 0 }}>
+          <button type="button" onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/offer')}>
             Оферта
-          </span>
+          </button>
           {' · '}
-          <span
-            style={{ color: '#aaa', cursor: 'pointer', textDecoration: 'underline' }}
-            onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/privacy')}
-          >
+          <button type="button" onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/privacy')}>
             Политика ПДн
-          </span>
+          </button>
         </footer>
       )}
       {/* На странице комментариев (открывается по кнопке «Комментарии») FAB поддержки скрыт */}

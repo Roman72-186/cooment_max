@@ -58,6 +58,14 @@ export function DashboardPage() {
             </span>
           </div>
           <div className="dashboard-header__actions">
+            {user.is_admin && (
+              <button
+                className="btn btn--ghost btn--sm"
+                onClick={() => setPage({ id: 'admin' })}
+              >
+                Админка
+              </button>
+            )}
             <button
               className="btn btn--ghost btn--sm"
               onClick={handleSyncChannels}

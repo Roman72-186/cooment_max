@@ -41,6 +41,10 @@ export function AdminPage() {
   const [eventsStats, setEventsStats] = useState<AdminEventsStats | null>(null);
   const [eventsDays, setEventsDays] = useState<7 | 30 | 90>(30);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  // Блокировка повторного тапа для точечных действий (выдача/снятие PRO, вкл/выкл канала)
+  const [pendingUserIds, setPendingUserIds] = useState<Set<number>>(new Set());
+  const [pendingChannelIds, setPendingChannelIds] = useState<Set<number>>(new Set());
 
   // Настройки
   const [settings, setSettings] = useState<{ pro_price_rub: number; pro_days: number } | null>(null);
@@ -78,6 +82,7 @@ export function AdminPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(false);
     try {
       const [u, c, p, pc, s, r, a, e] = await Promise.all([
         adminGetUsers(),
@@ -101,6 +106,7 @@ export function AdminPage() {
       setDaysInput(String(s.pro_days));
     } catch {
       addToast({ type: 'error', message: 'Не удалось загрузить данные' });
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -148,19 +154,36 @@ export function AdminPage() {
 
   // ─── Пользователи ────────────────────────────────────────────────
 
-  const grantPro = async (userId: number) => {
+  // Оборачивает точечное действие над пользователем — блокирует повторный тап на время запроса
+  const withPendingUser = async (userId: number, fn: () => Promise<void>) => {
+    setPendingUserIds(prev => new Set(prev).add(userId));
+    try {
+      await fn();
+    } finally {
+      setPendingUserIds(prev => { const next = new Set(prev); next.delete(userId); return next; });
+    }
+  };
+
+  const grantPro = (userId: number) => withPendingUser(userId, async () => {
     const d = settings?.pro_days ?? 30;
     try {
       await adminUpdateUser(userId, { plan: 'pro', days: d });
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, plan: 'pro' } : u));
     } catch { addToast({ type: 'error', message: 'Ошибка при выдаче PRO' }); }
-  };
+  });
 
-  const removePro = async (userId: number) => {
-    try {
-      await adminUpdateUser(userId, { plan: 'free' });
-      setUsers(prev => prev.map(u => u.id === userId ? { ...u, plan: 'free', plan_expires: null } : u));
-    } catch { addToast({ type: 'error', message: 'Ошибка при снятии PRO' }); }
+  const removePro = (userId: number, name: string | null) => {
+    requestConfirm({
+      message: `Снять PRO у «${name ?? userId}»? Доступ к платным функциям пропадёт немедленно.`,
+      variant: 'danger',
+      confirmLabel: 'Снять PRO',
+      onConfirm: () => withPendingUser(userId, async () => {
+        try {
+          await adminUpdateUser(userId, { plan: 'free' });
+          setUsers(prev => prev.map(u => u.id === userId ? { ...u, plan: 'free', plan_expires: null } : u));
+        } catch { addToast({ type: 'error', message: 'Ошибка при снятии PRO' }); }
+      }),
+    });
   };
 
   const deleteUser = (userId: number, name: string | null) => {
@@ -180,10 +203,15 @@ export function AdminPage() {
   // ─── Каналы ──────────────────────────────────────────────────────
 
   const toggleChannel = async (ch: AdminChannel) => {
+    setPendingChannelIds(prev => new Set(prev).add(ch.id));
     try {
       await adminToggleChannel(ch.id, !ch.is_active);
       setChannels(prev => prev.map(c => c.id === ch.id ? { ...c, is_active: !c.is_active } : c));
-    } catch { addToast({ type: 'error', message: 'Ошибка при изменении канала' }); }
+    } catch {
+      addToast({ type: 'error', message: 'Ошибка при изменении канала' });
+    } finally {
+      setPendingChannelIds(prev => { const next = new Set(prev); next.delete(ch.id); return next; });
+    }
   };
 
   const deleteChannel = (channelId: number, name: string | null) => {
@@ -263,7 +291,7 @@ export function AdminPage() {
     setAdjustReason('');
   };
 
-  const saveReferralAdjustment = async (referrerId: number) => {
+  const saveReferralAdjustment = (referrerId: number, referrerName: string | null) => {
     const normalizedAmount = Number(adjustAmount.replace(',', '.'));
     if (!Number.isFinite(normalizedAmount) || normalizedAmount === 0) {
       addToast({ type: 'error', message: 'Введите сумму со знаком' });
@@ -274,21 +302,29 @@ export function AdminPage() {
       return;
     }
 
-    setAdjustSaving(true);
-    try {
-      await adminAdjustReferralBalance(referrerId, {
-        amount_rub: normalizedAmount,
-        reason: adjustReason.trim(),
-      });
-      const updated = await adminGetReferralStats();
-      setReferralStats(updated);
-      cancelAdjustReferral();
-      addToast({ type: 'success', message: normalizedAmount > 0 ? 'Баллы начислены' : 'Баллы списаны' });
-    } catch (err: any) {
-      addToast({ type: 'error', message: err?.response?.data?.error ?? 'Ошибка корректировки баланса' });
-    } finally {
-      setAdjustSaving(false);
-    }
+    const amount = normalizedAmount;
+    const reason = adjustReason.trim();
+    const isCredit = amount > 0;
+
+    requestConfirm({
+      message: `${isCredit ? 'Начислить' : 'Списать'} ${formatRub(Math.abs(amount))} ₽ ${isCredit ? 'на баланс' : 'с баланса'} «${referrerName ?? referrerId}»? Причина: ${reason}`,
+      variant: isCredit ? 'default' : 'danger',
+      confirmLabel: isCredit ? 'Начислить' : 'Списать',
+      onConfirm: async () => {
+        setAdjustSaving(true);
+        try {
+          await adminAdjustReferralBalance(referrerId, { amount_rub: amount, reason });
+          const updated = await adminGetReferralStats();
+          setReferralStats(updated);
+          cancelAdjustReferral();
+          addToast({ type: 'success', message: isCredit ? 'Баллы начислены' : 'Баллы списаны' });
+        } catch (err: any) {
+          addToast({ type: 'error', message: err?.response?.data?.error ?? 'Ошибка корректировки баланса' });
+        } finally {
+          setAdjustSaving(false);
+        }
+      },
+    });
   };
 
   // ─── Вычисляемые значения ─────────────────────────────────────────
@@ -456,6 +492,12 @@ export function AdminPage() {
             {[1, 2, 3].map(i => <div key={i} className="skeleton-item" />)}
           </div>
 
+        ) : loadError ? (
+          <div className="error-state" role="alert">
+            <span>Не удалось загрузить данные</span>
+            <button onClick={load}>Повторить</button>
+          </div>
+
         ) : tab === 'users' ? (
           <>
             <div className="admin-filter-row">
@@ -477,7 +519,7 @@ export function AdminPage() {
                   <div className="admin-card__main">
                     <div className="admin-card__name">
                       {u.name ?? `#${u.max_user_id}`}
-                      {u.is_admin && <span className="admin-badge admin-badge--admin">ADMIN</span>}
+                      {u.is_admin && <span className="admin-badge admin-badge--admin">АДМИН</span>}
                     </div>
                     <div className="admin-card__meta">
                       ID {u.max_user_id} · {u.channel_count} кан. ·{' '}
@@ -495,8 +537,12 @@ export function AdminPage() {
                   </div>
                   <div className="admin-card__actions">
                     {u.plan === 'pro'
-                      ? <button className="btn btn--ghost btn--xs" onClick={() => removePro(u.id)}>Снять PRO</button>
-                      : <button className="btn btn--ghost btn--xs" onClick={() => grantPro(u.id)}>+{settings?.pro_days ?? 30} PRO</button>
+                      ? <button className="btn btn--ghost btn--xs" onClick={() => removePro(u.id, u.name)} disabled={pendingUserIds.has(u.id)}>
+                          {pendingUserIds.has(u.id) ? '...' : 'Снять PRO'}
+                        </button>
+                      : <button className="btn btn--ghost btn--xs" onClick={() => grantPro(u.id)} disabled={pendingUserIds.has(u.id)}>
+                          {pendingUserIds.has(u.id) ? '...' : `+${settings?.pro_days ?? 30} PRO`}
+                        </button>
                     }
                     <button className="btn btn--xs admin-btn--danger" onClick={() => deleteUser(u.id, u.name)}>
                       Удалить
@@ -556,8 +602,8 @@ export function AdminPage() {
                     </div>
                   </div>
                   <div className="admin-card__actions">
-                    <button className="btn btn--ghost btn--xs" onClick={() => toggleChannel(ch)}>
-                      {ch.is_active ? 'Выключить' : 'Включить'}
+                    <button className="btn btn--ghost btn--xs" onClick={() => toggleChannel(ch)} disabled={pendingChannelIds.has(ch.id)}>
+                      {pendingChannelIds.has(ch.id) ? '...' : ch.is_active ? 'Выключить' : 'Включить'}
                     </button>
                     <button className="btn btn--xs admin-btn--danger" onClick={() => deleteChannel(ch.id, ch.channel_name)}>
                       Удалить
@@ -688,6 +734,7 @@ export function AdminPage() {
                         <input
                           className="admin-settings__input"
                           placeholder="Сумма, например 150 или -150"
+                          aria-label="Сумма корректировки баланса, со знаком"
                           inputMode="decimal"
                           value={adjustAmount}
                           onChange={e => setAdjustAmount(e.target.value)}
@@ -695,11 +742,12 @@ export function AdminPage() {
                         <input
                           className="admin-settings__input"
                           placeholder="Причина"
+                          aria-label="Причина корректировки баланса"
                           value={adjustReason}
                           onChange={e => setAdjustReason(e.target.value)}
                         />
                         <div className="referral-adjust-form__actions">
-                          <button className="btn btn--ghost btn--xs" onClick={() => saveReferralAdjustment(r.id)} disabled={adjustSaving}>
+                          <button className="btn btn--ghost btn--xs" onClick={() => saveReferralAdjustment(r.id, r.name)} disabled={adjustSaving}>
                             {adjustSaving ? 'Сохраняю...' : 'Сохранить'}
                           </button>
                           <button className="btn btn--xs admin-btn--danger" onClick={cancelAdjustReferral}>
@@ -751,18 +799,18 @@ export function AdminPage() {
               {(acquisitionStats?.by_source.length ?? 0) === 0 ? (
                 <div className="empty-state"><span>Пока нет данных</span></div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '8px 0' }}>
+                <div className="acquisition-bars">
                   {acquisitionStats!.by_source.map((s) => {
                     const pct = totalUsers > 0 ? Math.round((s.count / totalUsers) * 100) : 0;
                     return (
-                      <div key={s.source} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ width: 170, fontSize: 13, color: 'var(--text-secondary)', flexShrink: 0 }}>
+                      <div key={s.source} className="acquisition-bar-row">
+                        <span className="acquisition-bar-row__label">
                           {ACQUISITION_LABELS[s.source] ?? s.source}
                         </span>
-                        <div style={{ flex: 1, height: 8, borderRadius: 4, background: 'var(--overlay-btn)', overflow: 'hidden' }}>
-                          <div style={{ width: `${pct}%`, height: '100%', background: 'var(--accent)' }} />
+                        <div className="acquisition-bar-track">
+                          <div className="acquisition-bar-fill" style={{ width: `${pct}%` }} />
                         </div>
-                        <span style={{ fontSize: 13, minWidth: 56, textAlign: 'right' }}>{s.count} ({pct}%)</span>
+                        <span className="acquisition-bar-row__value">{s.count} ({pct}%)</span>
                       </div>
                     );
                   })}
@@ -851,8 +899,9 @@ export function AdminPage() {
           <div className="admin-settings">
             {/* Цена и длительность */}
             <div className="admin-settings__row">
-              <label className="admin-settings__label">Цена PRO (₽/мес)</label>
+              <label className="admin-settings__label" htmlFor="admin-pro-price">Цена PRO (₽/мес)</label>
               <input
+                id="admin-pro-price"
                 className="admin-settings__input"
                 type="number"
                 min="1"
@@ -861,8 +910,9 @@ export function AdminPage() {
               />
             </div>
             <div className="admin-settings__row">
-              <label className="admin-settings__label">Длительность PRO (дней)</label>
+              <label className="admin-settings__label" htmlFor="admin-pro-days">Длительность PRO (дней)</label>
               <input
+                id="admin-pro-days"
                 className="admin-settings__input"
                 type="number"
                 min="1"
@@ -891,6 +941,7 @@ export function AdminPage() {
                 <div className="promo-input-row">
                   <input
                     placeholder="Код (напр. SUMMER20)"
+                    aria-label="Код промокода"
                     value={promoCode}
                     onChange={e => setPromoCode(e.target.value.toUpperCase())}
                     className="admin-settings__input promo-input--code"
@@ -900,6 +951,7 @@ export function AdminPage() {
                     min="1"
                     max="100"
                     placeholder="Скидка %"
+                    aria-label="Скидка в процентах"
                     value={promoDiscount}
                     onChange={e => setPromoDiscount(e.target.value)}
                     className="admin-settings__input promo-input--short"
@@ -910,13 +962,14 @@ export function AdminPage() {
                     type="number"
                     min="1"
                     placeholder="Макс. использований (пусто = ∞)"
+                    aria-label="Максимум использований промокода"
                     value={promoMaxUses}
                     onChange={e => setPromoMaxUses(e.target.value)}
                     className="admin-settings__input promo-input--short"
                   />
                   <input
                     type="date"
-                    placeholder="Действует до"
+                    aria-label="Дата истечения промокода"
                     value={promoExpires}
                     onChange={e => setPromoExpires(e.target.value)}
                     className="admin-settings__input promo-input--short"
@@ -949,6 +1002,7 @@ export function AdminPage() {
                     <button
                       className="btn btn--xs admin-btn--danger"
                       onClick={() => deletePromo(p.code)}
+                      aria-label={`Удалить промо-код ${p.code}`}
                     >
                       ✕
                     </button>
