@@ -7,6 +7,7 @@ import { pool } from '../db/db.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../utils/config.js';
 import type { WebhookUpdate } from '../../../shared/types.js';
+import { parseAcquisition } from '../../../shared/acquisition.js';
 
 export async function onBotStarted(update: WebhookUpdate): Promise<void> {
   // bot_started и message_created имеют разную структуру:
@@ -44,10 +45,12 @@ export async function onBotStarted(update: WebhookUpdate): Promise<void> {
     const existingUser = await db.getUserByMaxId(userId);
     const isNewUser     = !existingUser;
 
+    const acquisition = parseAcquisition(startParam);
     const user = await db.upsertUser({
       max_user_id: userId,
       name: userName,
       username: undefined,
+      acquisition: { source: acquisition.source, detail: acquisition.detail, raw: startParam || null },
     });
 
     // Приветственный триал: первый /start от нового пользователя даёт 7 дней PRO

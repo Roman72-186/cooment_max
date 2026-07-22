@@ -123,6 +123,7 @@ adminRouter.get('/users', requireAuth, requireAdminUser, async (req, res) => {
       SELECT
         u.id, u.max_user_id, u.name, u.username,
         u.plan, u.plan_expires, u.is_admin, u.created_at,
+        u.acquisition_source, u.acquisition_detail,
         COUNT(c.id)::int AS channel_count
       FROM users u
       LEFT JOIN channels c ON c.owner_id = u.id
@@ -663,5 +664,72 @@ adminRouter.patch('/settings', requireAuth, requireAdminUser, async (req, res) =
     res.status(500).json({ error: 'Ошибка сервера' });
   } finally {
     client.release();
+  }
+});
+
+// ─── GET /api/admin/acquisition ──────────────────────────────────────────────
+// Разбивка пользователей по источнику привлечения (откуда пришли)
+
+adminRouter.get('/acquisition', requireAuth, requireAdminUser, async (_req, res) => {
+  try {
+    const [bySource, topDetails] = await Promise.all([
+      pool.query(`
+        SELECT COALESCE(acquisition_source, 'unknown') AS source, COUNT(*)::int AS count
+        FROM users
+        GROUP BY 1
+        ORDER BY count DESC
+      `),
+      pool.query(`
+        SELECT COALESCE(acquisition_source, 'unknown') AS source,
+               COALESCE(acquisition_detail, '—') AS detail,
+               COUNT(*)::int AS count
+        FROM users
+        WHERE acquisition_detail IS NOT NULL
+        GROUP BY 1, 2
+        ORDER BY count DESC
+        LIMIT 20
+      `),
+    ]);
+    res.json({ by_source: bySource.rows, top_details: topDetails.rows });
+  } catch (err) {
+    console.error('GET /api/admin/acquisition error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
+  }
+});
+
+// ─── GET /api/admin/events ────────────────────────────────────────────────────
+// Клик-стрим: топ событий за период + последние сырые события
+
+adminRouter.get('/events', requireAuth, requireAdminUser, async (req, res) => {
+  const days = Math.min(Math.max(parseInt(String(req.query.days ?? 30), 10) || 30, 1), 365);
+
+  try {
+    const [topEvents, recent] = await Promise.all([
+      pool.query(
+        `SELECT event_name, event_type, COUNT(*)::int AS count
+           FROM user_events
+          WHERE created_at > NOW() - ($1 || ' days')::interval
+          GROUP BY event_name, event_type
+          ORDER BY count DESC
+          LIMIT 20`,
+        [days]
+      ),
+      pool.query(
+        `SELECT e.id, e.event_type, e.event_name, e.metadata, e.created_at,
+                e.user_max_id, u.name AS user_name, u.username AS user_username
+           FROM user_events e
+           LEFT JOIN users u ON u.max_user_id = e.user_max_id
+          ORDER BY e.created_at DESC
+          LIMIT 50`
+      ),
+    ]);
+    res.json({
+      days,
+      top_events: topEvents.rows,
+      recent: recent.rows.map(r => ({ ...r, user_max_id: String(r.user_max_id) })),
+    });
+  } catch (err) {
+    console.error('GET /api/admin/events error:', err);
+    res.status(500).json({ error: 'Ошибка сервера' });
   }
 });

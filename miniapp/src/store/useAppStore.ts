@@ -1,6 +1,7 @@
 // Глобальное состояние приложения (Zustand)
 import { create } from 'zustand';
 import type { Comment, UserMe, ChannelSummary } from '../api/backend';
+import { trackEvent } from '../api/backend';
 import type { Toast } from '../components/Toast';
 
 // Диалог подтверждения
@@ -24,6 +25,17 @@ export type Page =
   | { id: 'pricing' }
   | { id: 'admin' }
   | { id: 'inbox'; channelId?: number; channelName?: string };
+
+// Метаданные страницы, полезные для аналитики (какой пост/канал открыли)
+function pageEventMetadata(page: Page): Record<string, unknown> | undefined {
+  switch (page.id) {
+    case 'comments':  return { postId: page.postId };
+    case 'analytics': return { channelId: page.channelId };
+    case 'settings':  return { channelId: page.channelId };
+    case 'inbox':     return page.channelId ? { channelId: page.channelId } : undefined;
+    default:          return undefined;
+  }
+}
 
 interface AppState {
   // Навигация
@@ -62,7 +74,12 @@ interface AppState {
 export const useAppStore = create<AppState>((set) => ({
   // Навигация
   page: { id: 'loading' },
-  setPage: (page) => set({ page, comments: [], loading: false, error: null, replyTo: null }),
+  setPage: (page) => {
+    set({ page, comments: [], loading: false, error: null, replyTo: null });
+    if (page.id !== 'loading') {
+      trackEvent(`page:${page.id}`, pageEventMetadata(page), 'page_view');
+    }
+  },
 
   // Пользователь
   user: null,

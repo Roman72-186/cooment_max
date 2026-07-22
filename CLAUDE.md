@@ -244,6 +244,8 @@ GET  /api/referrals/stats             — статистика реф-прогр
 
 GET  /api/polls/:postId/results       — результаты опроса поста (optionalAuth → voted_option)
 
+POST /api/events                      — батч событий Mini App (просмотры страниц, клики) — не критично, ошибки не роняют UI
+
 GET  /c/:commentId                    — короткая ссылка на комментарий → 302 в MAX deep-link
                                         (регистрируется в backend/src/index.ts, не в роутерах)
                                         nginx `/c/` проксирует на mc_backend до SPA catch-all
@@ -264,6 +266,8 @@ PATCH /api/admin/channels/:id         — активировать/деакти�
 DELETE /api/admin/channels/:id        — удалить канал каскадно (requireAdminUser)
 GET  /api/admin/referrals             — балансы и комиссии всех рефереров (requireAdminUser)
 POST /api/admin/referrals/:id/adjust  — ручное начисление/списание ₽ на баланс (requireAdminUser)
+GET  /api/admin/acquisition           — разбивка пользователей по источнику привлечения (requireAdminUser)
+GET  /api/admin/events                — топ кликов/просмотров + лента последних событий (?days=7|30|90, requireAdminUser)
 
 GET  /health
 ```
@@ -471,6 +475,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS reply_notifications_enabled BOOLEAN N
 - `008_referral_rewards.sql` — ledger `referral_rewards` (тип `first_pro_days` / `commission`, тиры) + бэкфилл старых +30 дней
 - `009_referral_balance_adjustments.sql` — `referral_balance_adjustments` (ручные начисления/списания админом)
 - `010_referral_team_stats.sql` — гарантирует `ref_code` старым юзерам + индекс `idx_users_referred_by`
+- `011_analytics_events.sql` — атрибуция пользователя (`users.acquisition_source/detail/raw`, пишется один раз при первой вставке) + таблица `user_events` (клик-стрим Mini App)
 
 Индексы: `comments.post_id`, `posts.channel_id`, `analytics_daily.(channel_id, date)`, `channels.owner_id`
 

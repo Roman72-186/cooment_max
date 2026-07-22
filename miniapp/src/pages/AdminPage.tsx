@@ -8,11 +8,22 @@ import {
   adminGetSettings, adminUpdateSettings,
   adminCreatePromoCode, adminDeletePromoCode,
   adminGetReferralStats, adminAdjustReferralBalance,
+  adminGetAcquisitionStats, adminGetEvents,
   type AdminUser, type AdminChannel, type AdminPayment, type PromoCode,
   type AdminReferralStats, type AdminReferralReferrer,
+  type AdminAcquisitionStats, type AdminEventsStats,
 } from '../api/backend';
 
-type Tab = 'users' | 'channels' | 'payments' | 'referrals' | 'settings';
+type Tab = 'users' | 'channels' | 'payments' | 'referrals' | 'analytics' | 'settings';
+
+const ACQUISITION_LABELS: Record<string, string> = {
+  referral: 'Реферальная ссылка',
+  channel:  'Кнопка под постом канала',
+  utm:      'Внешняя реклама (UTM)',
+  notify:   'Кнопка уведомления',
+  direct:   'Прямой заход (/start или без метки)',
+  unknown:  'Не определено',
+};
 
 const ADMIN_PAGE_SIZE = 10;
 
@@ -26,6 +37,9 @@ export function AdminPage() {
   const [payments, setPayments] = useState<AdminPayment[]>([]);
   const [promoCodes, setPromoCodes] = useState<PromoCode[]>([]);
   const [referralStats, setReferralStats] = useState<AdminReferralStats | null>(null);
+  const [acquisitionStats, setAcquisitionStats] = useState<AdminAcquisitionStats | null>(null);
+  const [eventsStats, setEventsStats] = useState<AdminEventsStats | null>(null);
+  const [eventsDays, setEventsDays] = useState<7 | 30 | 90>(30);
   const [loading, setLoading] = useState(true);
 
   // Настройки
@@ -65,13 +79,15 @@ export function AdminPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [u, c, p, pc, s, r] = await Promise.all([
+      const [u, c, p, pc, s, r, a, e] = await Promise.all([
         adminGetUsers(),
         adminGetChannels(),
         adminGetPayments(),
         adminGetPromoCodes(),
         adminGetSettings(),
         adminGetReferralStats(),
+        adminGetAcquisitionStats(),
+        adminGetEvents(30),
       ]);
       setUsers(u);
       setChannels(c);
@@ -79,6 +95,8 @@ export function AdminPage() {
       setPromoCodes(pc);
       setSettings(s);
       setReferralStats(r);
+      setAcquisitionStats(a);
+      setEventsStats(e);
       setPriceInput(String(s.pro_price_rub));
       setDaysInput(String(s.pro_days));
     } catch {
@@ -89,6 +107,12 @@ export function AdminPage() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Перезагружаем только события при смене периода (не дёргаем весь дашборд).
+  // На первом монтировании дублирует запрос из load() — не критично, данные лёгкие.
+  useEffect(() => {
+    adminGetEvents(eventsDays).then(setEventsStats).catch(() => {});
+  }, [eventsDays]);
 
   // Сбрасываем пагинацию при изменении фильтров пользователей
   useEffect(() => {
@@ -419,6 +443,9 @@ export function AdminPage() {
           <button className={`admin-tab ${tab === 'referrals' ? 'admin-tab--active' : ''}`} onClick={() => setTab('referrals')}>
             Рефералы
           </button>
+          <button className={`admin-tab ${tab === 'analytics' ? 'admin-tab--active' : ''}`} onClick={() => setTab('analytics')}>
+            Аналитика
+          </button>
           <button className={`admin-tab ${tab === 'settings' ? 'admin-tab--active' : ''}`} onClick={() => setTab('settings')}>
             Настройки
           </button>
@@ -462,7 +489,8 @@ export function AdminPage() {
                       )}
                     </div>
                     <div className="admin-card__meta admin-card__meta--secondary">
-                      Присоединился: {formatDateTime(u.created_at)}
+                      Присоединился: {formatDateTime(u.created_at)} · {ACQUISITION_LABELS[u.acquisition_source ?? 'unknown'] ?? u.acquisition_source}
+                      {u.acquisition_detail && ` (${u.acquisition_detail})`}
                     </div>
                   </div>
                   <div className="admin-card__actions">
@@ -709,6 +737,111 @@ export function AdminPage() {
                     <span>{new Date(a.created_at).toLocaleDateString('ru-RU')}</span>
                   </div>
                 ))}
+              </div>
+            )}
+          </>
+
+        ) : tab === 'analytics' ? (
+          <>
+            {/* Источники привлечения */}
+            <div className="admin-settings-group">
+              <div className="admin-settings__label admin-settings__label--section">
+                Откуда пришли пользователи
+              </div>
+              {(acquisitionStats?.by_source.length ?? 0) === 0 ? (
+                <div className="empty-state"><span>Пока нет данных</span></div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '8px 0' }}>
+                  {acquisitionStats!.by_source.map((s) => {
+                    const pct = totalUsers > 0 ? Math.round((s.count / totalUsers) * 100) : 0;
+                    return (
+                      <div key={s.source} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <span style={{ width: 170, fontSize: 13, color: 'var(--text-secondary)', flexShrink: 0 }}>
+                          {ACQUISITION_LABELS[s.source] ?? s.source}
+                        </span>
+                        <div style={{ flex: 1, height: 8, borderRadius: 4, background: 'var(--overlay-btn)', overflow: 'hidden' }}>
+                          <div style={{ width: `${pct}%`, height: '100%', background: 'var(--accent)' }} />
+                        </div>
+                        <span style={{ fontSize: 13, minWidth: 56, textAlign: 'right' }}>{s.count} ({pct}%)</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Топ источников с деталями (реф-коды, каналы, UTM) */}
+            {(acquisitionStats?.top_details.length ?? 0) > 0 && (
+              <div className="admin-settings-group">
+                <div className="admin-settings__label admin-settings__label--section">
+                  Топ конкретных источников
+                </div>
+                <div className="admin-list">
+                  {acquisitionStats!.top_details.map((d, i) => (
+                    <div key={i} className="admin-card">
+                      <div className="admin-card__main">
+                        <div className="admin-card__name">{d.detail}</div>
+                        <div className="admin-card__meta">{ACQUISITION_LABELS[d.source] ?? d.source} · {d.count} польз.</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Что нажимали в Mini App */}
+            <div className="admin-settings-group">
+              <div className="admin-settings__label admin-settings__label--section">
+                Что нажимали в Mini App
+              </div>
+              <div className="admin-filter-row">
+                <select
+                  className="admin-filter-select"
+                  value={eventsDays}
+                  onChange={(e) => setEventsDays(Number(e.target.value) as 7 | 30 | 90)}
+                >
+                  <option value={7}>7 дней</option>
+                  <option value={30}>30 дней</option>
+                  <option value={90}>90 дней</option>
+                </select>
+              </div>
+
+              {(eventsStats?.top_events.length ?? 0) === 0 ? (
+                <div className="empty-state"><span>Событий пока нет</span></div>
+              ) : (
+                <div className="admin-list">
+                  {eventsStats!.top_events.map((ev) => (
+                    <div key={`${ev.event_type}:${ev.event_name}`} className="admin-card">
+                      <div className="admin-card__main">
+                        <div className="admin-card__name">{ev.event_name}</div>
+                        <div className="admin-card__meta">
+                          {ev.event_type === 'page_view' ? 'просмотр страницы' : 'клик'} · {ev.count} раз
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Живая лента последних событий */}
+            {(eventsStats?.recent.length ?? 0) > 0 && (
+              <div className="admin-settings-group">
+                <div className="admin-settings__label admin-settings__label--section">
+                  Последние события
+                </div>
+                <div className="admin-list">
+                  {eventsStats!.recent.map((e) => (
+                    <div key={e.id} className="admin-card">
+                      <div className="admin-card__main">
+                        <div className="admin-card__name">{e.event_name}</div>
+                        <div className="admin-card__meta">
+                          {e.user_name ?? `ID ${e.user_max_id}`} · {formatDateTime(e.created_at)}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </>

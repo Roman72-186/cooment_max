@@ -73,5 +73,8 @@
       "Bash(cp -r \"C:/Users/User/Desktop/Project/cooment_max/.claude/ui-ux-pro-max-skill/.claude/skills/slides\" \"C:/Users/User/Desktop/Project/cooment_max/.claude/skills/\")",
       "WebFetch(domain:maxstat.ru)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "open-knowledge"
+  ]
 }

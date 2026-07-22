@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { getReferralStats, type ReferralStats } from '../api/backend';
+import { getReferralStats, trackEvent, type ReferralStats } from '../api/backend';
 import { shareReferralLink, showAlert } from '../bridge/maxBridge';
 import { useAppStore } from '../store/useAppStore';
 
@@ -41,6 +41,7 @@ export function ReferralPage() {
 
   const handleShare = async () => {
     if (!stats?.ref_link || !stats.referral_available) return;
+    trackEvent('referral_share_click');
 
     try {
       const result = await shareReferralLink(stats.ref_link, shareText);
@@ -52,6 +53,7 @@ export function ReferralPage() {
 
   const handleCopy = async () => {
     if (!stats?.ref_link || !stats.referral_available) return;
+    trackEvent('referral_copy_click');
 
     try {
       await navigator.clipboard.writeText(stats.ref_link);

@@ -165,6 +165,41 @@ export async function refreshPostCounter(postId: number): Promise<void> {
   }
 }
 
+// ─── СОБЫТИЯ (аналитика кликов и переходов) ───────────────────────
+
+interface QueuedEvent {
+  type: string;
+  name: string;
+  metadata?: Record<string, unknown>;
+}
+
+let eventQueue: QueuedEvent[] = [];
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+const EVENT_BATCH_SIZE = 20;
+const EVENT_FLUSH_DELAY_MS = 1500;
+
+function flushEvents(): void {
+  flushTimer = null;
+  if (eventQueue.length === 0) return;
+  const batch = eventQueue.splice(0, EVENT_BATCH_SIZE);
+  api.post('/api/events', { events: batch }).catch(() => {
+    // Метрика не критична — не блокируем и не уведомляем пользователя об ошибке
+  });
+}
+
+// Зафиксировать просмотр страницы или клик кнопки. Не блокирует UI —
+// события копятся и отправляются батчем раз в 1.5с.
+export function trackEvent(
+  name: string,
+  metadata?: Record<string, unknown>,
+  type: 'page_view' | 'click' = 'click'
+): void {
+  eventQueue.push({ type, name, metadata });
+  if (!flushTimer) {
+    flushTimer = setTimeout(flushEvents, EVENT_FLUSH_DELAY_MS);
+  }
+}
+
 // ─── ПОЛЬЗОВАТЕЛЬ ────────────────────────────────────────────────
 
 export interface ChannelSummary {
@@ -197,8 +232,12 @@ export interface UserMe {
   channels: ChannelSummary[];
 }
 
-export async function getUserMe(): Promise<UserMe> {
-  const { data } = await api.get<UserMe>('/api/user/me');
+// startParam передаём только при первом заходе — backend сохраняет атрибуцию
+// (источник привлечения) один раз и не перезаписывает её при повторных вызовах.
+export async function getUserMe(startParam?: string | null): Promise<UserMe> {
+  const { data } = await api.get<UserMe>('/api/user/me', {
+    headers: startParam ? { 'X-Start-Param': startParam } : undefined,
+  });
   return data;
 }
 
@@ -367,6 +406,8 @@ export interface AdminUser {
   is_admin: boolean;
   created_at: string;
   channel_count: number;
+  acquisition_source: string | null;
+  acquisition_detail: string | null;
 }
 
 export interface AdminChannel {
@@ -538,4 +579,38 @@ export async function adminCreatePromoCode(payload: {
 
 export async function adminDeletePromoCode(code: string): Promise<void> {
   await api.delete(`/api/admin/promo-codes/${code}`);
+}
+
+// ─── ADMIN: АТРИБУЦИЯ И СОБЫТИЯ ───────────────────────────────────
+
+export interface AdminAcquisitionStats {
+  by_source: Array<{ source: string; count: number }>;
+  top_details: Array<{ source: string; detail: string; count: number }>;
+}
+
+export async function adminGetAcquisitionStats(): Promise<AdminAcquisitionStats> {
+  const { data } = await api.get('/api/admin/acquisition');
+  return data;
+}
+
+export interface AdminEventItem {
+  id: number;
+  event_type: string;
+  event_name: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  user_max_id: string;
+  user_name: string | null;
+  user_username: string | null;
+}
+
+export interface AdminEventsStats {
+  days: number;
+  top_events: Array<{ event_name: string; event_type: string; count: number }>;
+  recent: AdminEventItem[];
+}
+
+export async function adminGetEvents(days = 30): Promise<AdminEventsStats> {
+  const { data } = await api.get('/api/admin/events', { params: { days } });
+  return data;
 }

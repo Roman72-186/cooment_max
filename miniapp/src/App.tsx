@@ -1,7 +1,7 @@
 // Корневой компонент — маршрутизация по start_param и внутреннему состоянию
 import React, { useEffect } from 'react';
 import { getStartParam, notifyReady } from './bridge/maxBridge';
-import { getUserMe } from './api/backend';
+import { getUserMe, trackEvent } from './api/backend';
 import { useAppStore } from './store/useAppStore';
 import { CommentsPage } from './pages/CommentsPage';
 import { OnboardingPage } from './pages/OnboardingPage';
@@ -18,6 +18,7 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 const SUPPORT_URL = 'https://max.ru/join/Vp56M4Z2mlT-Z1TFeHl9rQyOQ1SAq9aet9g9C-92owY';
 
 function openSupportLink() {
+  trackEvent('support_fab_click');
   const webApp = (window as any).WebApp;
   if (webApp?.openLink) {
     webApp.openLink(SUPPORT_URL);
@@ -42,12 +43,15 @@ export function App() {
         const postId = parseInt(match[1], 10);
         const highlightCommentId = match[2] ? parseInt(match[2], 10) : undefined;
         setPage({ id: 'comments', postId, highlightCommentId });
+        // Фоновый upsert — не блокирует показ комментариев, но фиксирует атрибуцию
+        // (канал, из которого пришёл пользователь) для тех, кто никогда не жал /start боту
+        getUserMe(startParam).then(setUser).catch(() => {});
         return;
       }
     }
 
     // Все остальные случаи — грузим пользователя и решаем что показать
-    getUserMe()
+    getUserMe(startParam)
       .then((user) => {
         setUser(user);
 

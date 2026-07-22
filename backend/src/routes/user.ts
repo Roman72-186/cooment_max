@@ -3,18 +3,37 @@
 import { Router } from 'express';
 import { pool, upsertUser } from '../db/db.js';
 import { requireAuth } from '../middleware/auth.js';
+import { parseAcquisition } from '../../../shared/acquisition.js';
 
 export const userRouter = Router();
+
+// Определить источник привлечения из start_param первого захода в Mini App.
+// Для post_<id> (открыл по кнопке «Комментарии» под постом канала) уточняем до конкретного канала.
+async function resolveAcquisition(startParam: string | null) {
+  const acquisition = parseAcquisition(startParam);
+  if (acquisition.source === 'channel' && acquisition.detail?.startsWith('post_')) {
+    const postId = parseInt(acquisition.detail.slice(5), 10);
+    if (!isNaN(postId)) {
+      const { rows } = await pool.query('SELECT channel_id FROM posts WHERE id = $1', [postId]);
+      if (rows[0]) return { ...acquisition, detail: `channel_${rows[0].channel_id}` };
+    }
+  }
+  return acquisition;
+}
 
 userRouter.get('/me', requireAuth, async (req, res) => {
   const maxUser = req.maxUser!;
 
   try {
+    const rawStartParam = typeof req.headers['x-start-param'] === 'string' ? req.headers['x-start-param'] : null;
+    const acquisition = await resolveAcquisition(rawStartParam);
+
     // Upsert пользователя через общий helper из db.ts
     const user = await upsertUser({
       max_user_id: maxUser.user_id,
       name: maxUser.name,
       username: maxUser.username ?? null,
+      acquisition: { source: acquisition.source, detail: acquisition.detail, raw: rawStartParam },
     });
 
     // Загружаем список каналов пользователя

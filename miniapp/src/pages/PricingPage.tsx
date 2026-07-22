@@ -1,7 +1,7 @@
 // Страница тарифов — FREE vs PRO, кнопка оплаты T-Bank
 import { useState, useEffect } from 'react';
 import { useAppStore } from '../store/useAppStore';
-import { createPayment, getPaymentConfig, validatePromoCode, type PromoValidation } from '../api/backend';
+import { createPayment, getPaymentConfig, trackEvent, validatePromoCode, type PromoValidation } from '../api/backend';
 
 const FREE_FEATURES = [
   '1 канал',
@@ -73,6 +73,7 @@ export function PricingPage() {
     setPayError(null);
     try {
       const appliedCode = promoResult?.valid ? promoCode.trim() : undefined;
+      trackEvent('pricing_pay_click', { price: finalPrice, promo_applied: Boolean(appliedCode) });
       const { payment_url } = await createPayment(appliedCode);
       // Открываем страницу T-Bank через MAX Bridge или браузер
       const tg = (window as any).WebApp;

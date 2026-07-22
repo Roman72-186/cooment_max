@@ -12,6 +12,8 @@ export interface User {
   ref_code: string | null;
   referred_by: number | null;
   reply_notifications_enabled: boolean; // получать DM когда ответили на комментарий
+  acquisition_source: string | null;    // 'referral' | 'channel' | 'utm' | 'notify' | 'direct' — заполняется один раз
+  acquisition_detail: string | null;    // ref-код / channel_<id> / "utm_source:campaign"
   created_at: string;
 }
 

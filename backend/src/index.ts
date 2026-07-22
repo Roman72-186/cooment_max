@@ -10,6 +10,7 @@ import { paymentsRouter } from './routes/payments.js';
 import { adminRouter } from './routes/admin.js';
 import { referralsRouter } from './routes/referrals.js';
 import { pollsRouter } from './routes/polls.js';
+import { eventsRouter } from './routes/events.js';
 import { startAutoRenewJob } from './jobs/autoRenew.js';
 import { pool } from './db/db.js';
 
@@ -81,7 +82,7 @@ app.use('/api/comments', commentsLimiter);
 app.use((_req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Init-Data');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Init-Data, X-Start-Param');
   if (_req.method === 'OPTIONS') {
     res.sendStatus(204);
     return;
@@ -104,6 +105,7 @@ app.use('/api/payments', paymentsRouter);
 app.use('/api/admin', adminRouter);
 app.use('/api/referrals', referralsRouter);
 app.use('/api/polls', pollsRouter);
+app.use('/api/events', eventsRouter);
 
 // Короткая ссылка на комментарий: /c/:id → 302 в MAX deep link
 app.get('/c/:commentId', async (req, res) => {
