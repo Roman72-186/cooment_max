@@ -529,6 +529,17 @@ export function AdminPage() {
                       {u.plan_expires && (
                         <> до {new Date(u.plan_expires).toLocaleDateString('ru-RU')}</>
                       )}
+                      {' '}
+                      <span
+                        className={`admin-badge ${u.bot_dialog_started_at ? 'admin-badge--on' : 'admin-badge--off'}`}
+                        title={
+                          u.bot_dialog_started_at
+                            ? `Диалог с ботом открыт: ${formatDateTime(u.bot_dialog_started_at)} — доступен для DM-рассылки`
+                            : 'Диалог с ботом не открыт (не нажимал /start) — DM недоступен, только Mini App'
+                        }
+                      >
+                        {u.bot_dialog_started_at ? '💬 диалог открыт' : '💬 нет диалога'}
+                      </span>
                     </div>
                     <div className="admin-card__meta admin-card__meta--secondary">
                       Присоединился: {formatDateTime(u.created_at)} · {ACQUISITION_LABELS[u.acquisition_source ?? 'unknown'] ?? u.acquisition_source}

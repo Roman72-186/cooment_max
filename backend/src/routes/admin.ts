@@ -123,7 +123,7 @@ adminRouter.get('/users', requireAuth, requireAdminUser, async (req, res) => {
       SELECT
         u.id, u.max_user_id, u.name, u.username,
         u.plan, u.plan_expires, u.is_admin, u.created_at,
-        u.acquisition_source, u.acquisition_detail,
+        u.acquisition_source, u.acquisition_detail, u.bot_dialog_started_at,
         COUNT(c.id)::int AS channel_count
       FROM users u
       LEFT JOIN channels c ON c.owner_id = u.id

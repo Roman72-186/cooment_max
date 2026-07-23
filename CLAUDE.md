@@ -400,6 +400,7 @@ Prettier (`.prettierrc`): `singleQuote: true`, `semi: true`, `tabWidth: 2`, `tra
 - `comments.parent_id` — nullable FK на `comments.id` для тредов
 - `channels.owner_id → users.id`; `users.plan` = `free | pro`
 - `users.is_admin BOOLEAN` — суперадмин флаг; `users.reply_notifications_enabled BOOLEAN` — настройка DM-уведомлений
+- `users.bot_dialog_started_at TIMESTAMPTZ` — ставится в `bot/src/db/db.ts::upsertUser()` только при вызове с `botDialogStarted: true` (реальный `/start`, `onBotStarted.ts`); вызовы upsertUser из `onBotAdded.ts`/`onPostCreated.ts` (регистрация владельца канала) его не трогают. `NULL` = диалог с ботом не открыт → DM недоступен (MAX API вернёт `404 dialog.not.found`), доступен только Mini App. Не самокорректируется на будущий блок/удаление чата ботом — это последнее известное состояние, не гарантия текущей доставляемости
 - `comment_reactions` — реакции на комментарии; PK: `(comment_id, user_id, emoji)` — каждый emoji независим
 - `reply_notifications (reply_comment_id, recipient_max_user_id, sent_at)` — очередь DM-уведомлений об ответах; backend пишет, бот читает и помечает `sent_at`
 - `channel_bans (channel_id, banned_max_id)` — бан пользователей владельцем канала
@@ -476,6 +477,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS reply_notifications_enabled BOOLEAN N
 - `009_referral_balance_adjustments.sql` — `referral_balance_adjustments` (ручные начисления/списания админом)
 - `010_referral_team_stats.sql` — гарантирует `ref_code` старым юзерам + индекс `idx_users_referred_by`
 - `011_analytics_events.sql` — атрибуция пользователя (`users.acquisition_source/detail/raw`, пишется один раз при первой вставке) + таблица `user_events` (клик-стрим Mini App)
+- `012_bot_dialog_tracking.sql` — `users.bot_dialog_started_at` (диалог с ботом открыт → доступен для DM-рассылки)
 
 Индексы: `comments.post_id`, `posts.channel_id`, `analytics_daily.(channel_id, date)`, `channels.owner_id`
 

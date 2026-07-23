@@ -51,6 +51,7 @@ export async function onBotStarted(update: WebhookUpdate): Promise<void> {
       name: userName,
       username: undefined,
       acquisition: { source: acquisition.source, detail: acquisition.detail, raw: startParam || null },
+      botDialogStarted: true,
     });
 
     // Приветственный триал: первый /start от нового пользователя даёт 7 дней PRO

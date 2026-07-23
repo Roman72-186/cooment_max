@@ -23,18 +23,24 @@ export async function upsertUser(data: {
   // Источник привлечения — пишется только при первой вставке (не входит в DO UPDATE SET),
   // поэтому повторные /start не перезатирают исходную атрибуцию.
   acquisition?: { source: string; detail: string | null; raw: string | null };
+  // true только когда вызов пришёл из onBotStarted (реальный /start) — onBotAdded и
+  // onPostCreated тоже вызывают upsertUser (регистрируют владельца канала), но это
+  // не значит, что владелец лично открыл диалог с ботом.
+  botDialogStarted?: boolean;
 }): Promise<User> {
   const result = await pool.query<User>(
-    `INSERT INTO users (max_user_id, name, username, ref_code, acquisition_source, acquisition_detail, acquisition_raw)
-     VALUES ($1, $2, $3, substr(md5(random()::text), 1, 8), $4, $5, $6)
+    `INSERT INTO users (max_user_id, name, username, ref_code, acquisition_source, acquisition_detail, acquisition_raw, bot_dialog_started_at)
+     VALUES ($1, $2, $3, substr(md5(random()::text), 1, 8), $4, $5, $6, CASE WHEN $7 THEN NOW() ELSE NULL END)
      ON CONFLICT (max_user_id)
      DO UPDATE SET name = EXCLUDED.name,
                    username = COALESCE(EXCLUDED.username, users.username),
-                   ref_code = COALESCE(users.ref_code, substr(md5(users.id::text || ':' || users.max_user_id::text), 1, 8))
+                   ref_code = COALESCE(users.ref_code, substr(md5(users.id::text || ':' || users.max_user_id::text), 1, 8)),
+                   bot_dialog_started_at = CASE WHEN $7 THEN NOW() ELSE users.bot_dialog_started_at END
      RETURNING *`,
     [
       data.max_user_id, data.name ?? null, data.username ?? null,
       data.acquisition?.source ?? null, data.acquisition?.detail ?? null, data.acquisition?.raw ?? null,
+      data.botDialogStarted ?? false,
     ]
   );
   return result.rows[0];

@@ -408,6 +408,7 @@ export interface AdminUser {
   channel_count: number;
   acquisition_source: string | null;
   acquisition_detail: string | null;
+  bot_dialog_started_at: string | null;
 }
 
 export interface AdminChannel {

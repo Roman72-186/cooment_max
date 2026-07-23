@@ -14,6 +14,7 @@ export interface User {
   reply_notifications_enabled: boolean; // получать DM когда ответили на комментарий
   acquisition_source: string | null;    // 'referral' | 'channel' | 'utm' | 'notify' | 'direct' — заполняется один раз
   acquisition_detail: string | null;    // ref-код / channel_<id> / "utm_source:campaign"
+  bot_dialog_started_at: string | null; // когда пользователь нажал /start; null — диалог с ботом не открыт, DM недоступен
   created_at: string;
 }
 
