@@ -560,7 +560,7 @@ export function AdminPage() {
                     </div>
                     <div className="admin-card__meta admin-card__meta--secondary">
                       Присоединился: {formatDateTime(u.created_at)} · {ACQUISITION_LABELS[u.acquisition_source ?? 'unknown'] ?? u.acquisition_source}
-                      {u.acquisition_detail && ` (${u.acquisition_detail})`}
+                      {u.acquisition_detail && ` (${u.acquisition_channel_name ?? u.acquisition_detail})`}
                     </div>
                   </div>
                   <div className="admin-card__actions">
@@ -856,7 +856,7 @@ export function AdminPage() {
                   {acquisitionStats!.top_details.map((d, i) => (
                     <div key={i} className="admin-card">
                       <div className="admin-card__main">
-                        <div className="admin-card__name">{d.detail}</div>
+                        <div className="admin-card__name">{d.channel_name ?? d.detail}</div>
                         <div className="admin-card__meta">{ACQUISITION_LABELS[d.source] ?? d.source} · {d.count} польз.</div>
                       </div>
                     </div>

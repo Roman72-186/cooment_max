@@ -408,6 +408,7 @@ export interface AdminUser {
   channel_count: number;
   acquisition_source: string | null;
   acquisition_detail: string | null;
+  acquisition_channel_name: string | null;
   bot_dialog_started_at: string | null;
 }
 
@@ -586,7 +587,7 @@ export async function adminDeletePromoCode(code: string): Promise<void> {
 
 export interface AdminAcquisitionStats {
   by_source: Array<{ source: string; count: number }>;
-  top_details: Array<{ source: string; detail: string; count: number }>;
+  top_details: Array<{ source: string; detail: string; channel_name: string | null; count: number }>;
 }
 
 export async function adminGetAcquisitionStats(): Promise<AdminAcquisitionStats> {
