@@ -235,6 +235,13 @@ adminRouter.delete('/users/:id', requireAuth, requireAdminUser, async (req, res)
       [userId]
     );
     await client.query('DELETE FROM channels WHERE owner_id = $1', [userId]);
+    // Комментарии, оставленные пользователем на чужих каналах, — не удаляем (это контент
+    // чужих обсуждений, на них могут ссылаться чужие ответы через parent_id), а обезличиваем
+    await client.query('UPDATE comments SET author_id = NULL WHERE author_id = $1', [userId]);
+    // Платежи сохраняем для финансового учёта, отвязываем от удаляемого пользователя
+    await client.query('UPDATE payments SET user_id = NULL WHERE user_id = $1', [userId]);
+    // Снимаем реферальную привязку у тех, кто указывал этого пользователя как пригласившего
+    await client.query('UPDATE users SET referred_by = NULL WHERE referred_by = $1', [userId]);
     await client.query('DELETE FROM users WHERE id = $1', [userId]);
     await client.query('COMMIT');
     res.json({ ok: true });
