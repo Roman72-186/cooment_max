@@ -55,6 +55,7 @@ export function AdminPage() {
   // Фильтры
   const [userSearch, setUserSearch] = useState('');
   const [planFilter, setPlanFilter] = useState<'all' | 'free' | 'pro'>('all');
+  const [dialogFilter, setDialogFilter] = useState<'all' | 'has' | 'none'>('all');
   const [channelSearch, setChannelSearch] = useState('');
   const [channelFilter, setChannelFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [referralSearch, setReferralSearch] = useState('');
@@ -358,15 +359,26 @@ export function AdminPage() {
 
   const filteredUsers = useMemo(() => {
     const q = userSearch.toLowerCase();
-    return users.filter(u => {
-      const matchSearch = !q ||
-        (u.name ?? '').toLowerCase().includes(q) ||
-        (u.username ?? '').toLowerCase().includes(q) ||
-        String(u.max_user_id).includes(q);
-      const matchPlan = planFilter === 'all' || u.plan === planFilter;
-      return matchSearch && matchPlan;
-    });
-  }, [users, userSearch, planFilter]);
+    return users
+      .filter(u => {
+        const matchSearch = !q ||
+          (u.name ?? '').toLowerCase().includes(q) ||
+          (u.username ?? '').toLowerCase().includes(q) ||
+          String(u.max_user_id).includes(q);
+        const matchPlan = planFilter === 'all' || u.plan === planFilter;
+        const hasDialog = !!u.bot_dialog_started_at;
+        const matchDialog = dialogFilter === 'all' || (dialogFilter === 'has' ? hasDialog : !hasDialog);
+        return matchSearch && matchPlan && matchDialog;
+      })
+      // Сортировка: сначала PRO, потом FREE; внутри группы — сначала с открытым диалогом
+      .sort((a, b) => {
+        if (a.plan !== b.plan) return a.plan === 'pro' ? -1 : 1;
+        const aDialog = !!a.bot_dialog_started_at;
+        const bDialog = !!b.bot_dialog_started_at;
+        if (aDialog !== bDialog) return aDialog ? -1 : 1;
+        return 0;
+      });
+  }, [users, userSearch, planFilter, dialogFilter]);
 
   const filteredChannels = useMemo(() => {
     const q = channelSearch.toLowerCase();
@@ -508,9 +520,14 @@ export function AdminPage() {
                 onChange={e => setUserSearch(e.target.value)}
               />
               <select className="admin-filter-select" value={planFilter} onChange={e => setPlanFilter(e.target.value as any)}>
-                <option value="all">Все</option>
+                <option value="all">Все планы</option>
                 <option value="free">FREE</option>
                 <option value="pro">PRO</option>
+              </select>
+              <select className="admin-filter-select" value={dialogFilter} onChange={e => setDialogFilter(e.target.value as any)}>
+                <option value="all">Все диалоги</option>
+                <option value="has">Есть диалог</option>
+                <option value="none">Нет диалога</option>
               </select>
             </div>
             <div className="admin-list">

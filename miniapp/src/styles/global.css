@@ -2668,7 +2668,8 @@ body {
    ПОИСК/ФИЛЬТР В АДМИНКЕ
 ═══════════════════════════════════════════════════════════ */
 
-.admin-filter-row { display: flex; gap: 8px; margin-bottom: 12px; }
+.admin-filter-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.admin-filter-row .admin-filter-input { min-width: 140px; }
 .admin-filter-input {
   flex: 1;
   background: var(--bg-raised);
