@@ -2,10 +2,6 @@ networks:
   max-comments-net:
     name: max-comments-net
     driver: bridge
-  # Внешняя сеть urbot — нужна для nginx, который обслуживает оба проекта
-  urbot-net:
-    name: urbot-net
-    external: true
 
 volumes:
   mc_postgres_data:
@@ -77,14 +73,13 @@ services:
       start_period: 40s
 
   # 5. Nginx — раздаёт Mini App + обратный прокси для API/webhook
-  # Подключён к обеим сетям: видит mc_backend и urbot-backend одновременно
   mc_nginx:
     build:
       context: ..
       dockerfile: infra/Dockerfile.nginx
     container_name: mc_nginx
     restart: unless-stopped
-    networks: [max-comments-net, urbot-net]
+    networks: [max-comments-net]
     depends_on:
       mc_bot:
         condition: service_healthy

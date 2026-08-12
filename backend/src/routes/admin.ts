@@ -123,11 +123,18 @@ adminRouter.get('/users', requireAuth, requireAdminUser, async (req, res) => {
       SELECT
         u.id, u.max_user_id, u.name, u.username,
         u.plan, u.plan_expires, u.is_admin, u.created_at,
-        u.acquisition_source, u.acquisition_detail, u.bot_dialog_started_at,
+        u.acquisition_source, u.acquisition_detail, ac.channel_name AS acquisition_channel_name,
+        u.bot_dialog_started_at,
         COUNT(c.id)::int AS channel_count
       FROM users u
       LEFT JOIN channels c ON c.owner_id = u.id
-      GROUP BY u.id
+      -- acquisition_detail = 'channel_<id>' для тех, кто пришёл по кнопке «Комментарии» под постом канала
+      LEFT JOIN channels ac ON ac.id = CASE
+        WHEN u.acquisition_detail ~ '^channel_[0-9]+$'
+        THEN substring(u.acquisition_detail FROM 9)::bigint
+        ELSE NULL
+      END
+      GROUP BY u.id, ac.channel_name
       ORDER BY u.created_at DESC
       LIMIT $1 OFFSET $2
     `, [limit, offset]);
@@ -687,11 +694,17 @@ adminRouter.get('/acquisition', requireAuth, requireAdminUser, async (_req, res)
         ORDER BY count DESC
       `),
       pool.query(`
-        SELECT COALESCE(acquisition_source, 'unknown') AS source,
-               COALESCE(acquisition_detail, '—') AS detail,
+        SELECT COALESCE(u.acquisition_source, 'unknown') AS source,
+               COALESCE(u.acquisition_detail, '—') AS detail,
+               MAX(ac.channel_name) AS channel_name,
                COUNT(*)::int AS count
-        FROM users
-        WHERE acquisition_detail IS NOT NULL
+        FROM users u
+        LEFT JOIN channels ac ON ac.id = CASE
+          WHEN u.acquisition_detail ~ '^channel_[0-9]+$'
+          THEN substring(u.acquisition_detail FROM 9)::bigint
+          ELSE NULL
+        END
+        WHERE u.acquisition_detail IS NOT NULL
         GROUP BY 1, 2
         ORDER BY count DESC
         LIMIT 20

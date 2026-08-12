@@ -6,10 +6,10 @@
 
 1. Сначала читать [../AGENTS.md](../AGENTS.md) — главный источник правды workspace.
 2. Для Claude Code совместимый вход — [CLAUDE.md](CLAUDE.md), но он должен вести к этому AGENTS.md.
-3. Для кода читать [../ai-clone/principles/code.md](../ai-clone/principles/code.md).
-4. Для продуктовых решений читать [../ai-clone/principles/product.md](../ai-clone/principles/product.md).
-5. Для правил работы агентов читать [../ai-clone/principles/working-with-claude.md](../ai-clone/principles/working-with-claude.md).
-6. Для уроков и повторяющихся ошибок читать [../ai-clone/feedback/](../ai-clone/feedback/).
+3. Для кода читать [../ai-clone/_brain/principles/code.md](../ai-clone/_brain/principles/code.md).
+4. Для продуктовых решений читать [../ai-clone/_brain/principles/product.md](../ai-clone/_brain/principles/product.md).
+5. Для правил работы агентов читать [../ai-clone/_brain/principles/working-with-claude.md](../ai-clone/_brain/principles/working-with-claude.md).
+6. Для уроков и повторяющихся ошибок читать [../ai-clone/_brain/feedback/](../ai-clone/_brain/feedback/).
 7. Для планов использовать [../plans/](../plans/); для handoff между Codex и Claude Code использовать [session-handoffs/current.md](session-handoffs/current.md).
 
 ## Паритет Codex и Claude Code
