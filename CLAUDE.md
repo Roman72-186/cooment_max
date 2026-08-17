@@ -19,10 +19,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Этот проект использует общие принципы и активы из корня монорепо `Project/`:
 
-- **Голос и стиль:** [../ai-clone/voice/](../ai-clone/voice/), [../ai-clone/style/](../ai-clone/style/)
-- **Принципы кода:** [../ai-clone/principles/code.md](../ai-clone/principles/code.md)
-- **Принципы продукта:** [../ai-clone/principles/product.md](../ai-clone/principles/product.md)
-- **Уроки и подтверждённые решения:** [../ai-clone/feedback/](../ai-clone/feedback/) — `Why / How to apply`
+- **Голос и стиль:** [../ai-clone/_brain/voice/](../ai-clone/_brain/voice/), [../ai-clone/_brain/style/](../ai-clone/_brain/style/)
+- **Принципы кода:** [../ai-clone/_brain/principles/code.md](../ai-clone/_brain/principles/code.md)
+- **Принципы продукта:** [../ai-clone/_brain/principles/product.md](../ai-clone/_brain/principles/product.md)
+- **Уроки и подтверждённые решения:** [../ai-clone/_brain/feedback/](../ai-clone/_brain/feedback/) — `Why / How to apply`
 - **Совет директоров (методы):** [../mastery/INDEX.md](../mastery/INDEX.md)
 - **Активные планы:** [../plans/](../plans/) — файлы с префиксом `cooment-max-`
 - **Ретроспективы:** [../retrospectives/](../retrospectives/)
@@ -52,25 +52,29 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Services
 
-| Service | Container | Port | Purpose |
-|---------|-----------|------|---------|
-| Bot | `mc_bot` | 3000 | MAX webhook receiver + background jobs |
-| Backend API | `mc_backend` | 3001 | REST API для Mini App |
-| PostgreSQL | `mc_postgres` | 5432 | Локальная БД внутри Docker |
-| Redis | `mc_redis` | 6379 | Зарезервирован (минимальное использование) |
-| Nginx | `mc_nginx` | 80/443 | SSL termination + routing + раздача Mini App |
+Прод — VPS `72.56.77.253` (`server-main` в `~/.ssh/config`), домен `comment-max.ru`. Переезд со старого VPS выполнен 12.08.2026, та машина выведена из эксплуатации и больше не существует. Никакого Vercel, никакого Supabase.
 
-**Всё на одном VPS** `comment-max.ru` (89.169.2.231). Никакого Vercel, никакого Supabase.
-Mini App собирается внутри `infra/Dockerfile.nginx` (multi-stage: node build → nginx static) и раздаётся nginx из `/var/www/miniapp`.
-VPS-контейнеры объединены в bridge-сеть `max-comments-net`. Все контейнеры/volumes с префиксом `mc_`.
+| Service | Container | Порт на хосте | Purpose |
+|---------|-----------|---------------|---------|
+| Bot | `mc_bot` | `127.0.0.1:3020` → 3000 | MAX webhook receiver + background jobs |
+| Backend API | `mc_backend` | `127.0.0.1:3021` → 3001 | REST API для Mini App |
+| PostgreSQL | `mc_postgres` | только внутри сети | Локальная БД внутри Docker |
 
-> **Внимание:** `infra/nginx.conf` обслуживает не только `comment-max.ru` — на том же nginx живёт второй домен `legal72.ru` (proxy на контейнер `masterorg:4321`, чужой проект на этом же VPS). При правках nginx.conf не удалять этот server-блок и его upstream.
+Compose-файл прода — `infra/docker-compose.253.yml`. Контейнеры в bridge-сети `max-comments-net`, префикс `mc_`.
+
+**Nginx на 253 — системный, на хосте, а не в контейнере.** Он терминирует TLS, проксирует `/webhook` → `127.0.0.1:3020`, `/api/*` и `/c/*` → `127.0.0.1:3021`, раздаёт собранный Mini App из `/var/www/comment-max-miniapp` и юридическую статику из `/opt/max-comments/infra/static`. Конфиг — `/etc/nginx/sites-enabled/comment-max.ru` на сервере. Сертификат `comment-max.ru` — Let's Encrypt через хостовый certbot.
+
+> **Внимание:** `infra/nginx.conf` и `infra/Dockerfile.nginx` в репозитории относятся к схеме с контейнером `mc_nginx`, которой больше нет. **На проде они не применяются** — правка `infra/nginx.conf` ничего не меняет, конфиг живёт на сервере. Если понадобится править nginx на 253 — редактировать `/etc/nginx/sites-enabled/comment-max.ru` напрямую и держать в уме, что на том же nginx стоят чужие сайты (`agro.assaru.space`, `assaru.space`, `legal72.ru`, `telegram-broadcast` и ещё десяток) — трогать только свой server-блок.
+
+> **Redis не развёрнут.** В `infra/docker-compose.yml` и `infra/docker-compose.253.yml` сервиса `mc_redis` нет, на проде контейнера тоже нет. `REDIS_URL`/`REDIS_PASSWORD` остались в `infra/.env.example` и читаются в `bot/src/utils/config.ts` как задел на будущее. Команда `docker exec -it mc_redis redis-cli` работать не будет.
 
 ---
 
 ## Commands
 
 ### Development
+
+> **На Windows `npm run dev` в `bot/` и `backend/` падает.** Скрипт начинается с bash-префикса `NODE_ENV=development`, а npm на Windows запускает скрипты через `cmd.exe` (`npm config get shell`), который такой синтаксис не понимает — получите `'NODE_ENV' is not recognized`. Обходы: запускать из Git Bash; или в PowerShell `$env:NODE_ENV='development'; npx tsx watch src/index.ts`; или один раз `npm config set script-shell bash`. `miniapp` этим не затронут.
 
 ```bash
 # Bot — long polling, без webhook и HTTPS
@@ -106,9 +110,13 @@ cd bot && npm run test:watch
 cd bot && npx vitest run src/handlers/__tests__/onBotAdded.test.ts
 ```
 
-Тесты используют `vi.mock` для всех внешних зависимостей (`maxClient`, `db`, `logger`, `config`) перед импортом тестируемого модуля. Хелперы вроде `makeSender()`/`makeUpdate()` строят тестовые объекты. 4 тест-файла (~68 тестов) в `bot/src/handlers/__tests__/`: `onBotAdded`, `onBotRemoved`, `onBotStarted`, `onPostCreated` — фильтрация событий, определение owner через `getChatAdmins`, fallback к sender, создание/реактивация канала, публикация постов.
+Тесты используют `vi.mock` для всех внешних зависимостей (`maxClient`, `db`, `logger`, `config`) перед импортом тестируемого модуля. Хелперы вроде `makeSender()`/`makeUpdate()` строят тестовые объекты. 4 тест-файла (42 теста) в `bot/src/handlers/__tests__/`: `onBotAdded`, `onBotRemoved`, `onBotStarted`, `onPostCreated` — фильтрация событий, определение owner через `getChatAdmins`, fallback к sender, создание/реактивация канала, публикация постов.
+
+> `bot/vitest.config.ts` явно исключает `**/dist/**` — без этого vitest подхватывает старые скомпилированные `.test.js` из build-артефактов вместе с исходными `.test.ts` и завышает счётчик тестов в 2-3 раза.
 
 ### Docker (prod + интеграционное тестирование)
+
+Локально (`infra/docker-compose.yml`, схема со старого сервера — с контейнером `mc_nginx`):
 
 ```bash
 cd infra/
@@ -120,35 +128,68 @@ docker-compose logs -f mc_bot                   # логи
 docker-compose down                             # остановить (данные сохранятся)
 ```
 
+На проде 253 файл другой — `docker-compose.253.yml`, и его нужно указывать явно:
+
+```bash
+ssh server-main
+cd /opt/max-comments/infra
+docker compose -f docker-compose.253.yml ps
+docker compose -f docker-compose.253.yml logs -f mc_bot
+docker compose -f docker-compose.253.yml up -d mc_bot   # перезапуск с новым образом
+```
+
 ### Database
 
 ```bash
 # Локальный PostgreSQL внутри Docker
 docker exec -it mc_postgres psql -U mcuser -d maxcomments
-
-# Redis
-docker exec -it mc_redis redis-cli -a <REDIS_PASSWORD>
 ```
 
 ### Deploy
 
-Сервер НЕ имеет git-репозитория. Деплой через одноразовые Python SFTP-скрипты в корне репо (создаются под конкретную задачу, после применения удаляются). SSH-пароли в скрипты не хардкодить — брать из ENV/у владельца.
+**На сервере нет git и нет `docker compose --build`** — в `docker-compose.253.yml` у сервисов указан только `image:`, без `build:`. Образы `infra-mc_bot:latest` / `infra-mc_backend:latest` собираются на сервере командой `docker build` из залитых туда исходников.
 
-**Паттерн деплоя** — каждый скрипт: `upload files → apply migration → rebuild containers`. Шаблон:
-```python
-# python deploy_<task>.py
-# 1. paramiko SFTP: залить изменённые файлы в /opt/max-comments/
-# 2. docker exec mc_postgres psql ... < миграция (если есть)
-# 3. docker-compose up -d --build mc_bot|mc_backend|mc_nginx (что менялось)
+Гейты перед выкатом: `npx tsc --noEmit` в `bot`/`backend`, `npm run typecheck` в `miniapp`, `npm test` в `bot`.
+
+```bash
+# 0. Страховка для отката (на сервере)
+ssh server-main "docker tag infra-mc_bot:latest infra-mc_bot:backup-$(date +%Y%m%d); \
+                 docker tag infra-mc_backend:latest infra-mc_backend:backup-$(date +%Y%m%d); \
+                 cp -r /var/www/comment-max-miniapp /var/www/comment-max-miniapp.bak-$(date +%Y%m%d)"
+
+# 1. Исходники бота/backend tar-пайпом (из корня проекта)
+tar czf - --exclude=node_modules --exclude=dist bot backend shared \
+  | ssh server-main "tar xzf - -C /opt/max-comments"
+
+# 2. Сборка образов на сервере. Контекст — /opt/max-comments: Dockerfile'ы ждут рядом
+#    shared/ и infra/certs/russian_trusted_ca_bundle.pem
+ssh server-main "cd /opt/max-comments && \
+  docker build -f bot/Dockerfile -t infra-mc_bot:latest . && \
+  docker build -f backend/Dockerfile -t infra-mc_backend:latest ."
+
+# 3. Перезапуск с новым образом
+ssh server-main "cd /opt/max-comments/infra && \
+  docker compose -f docker-compose.253.yml up -d mc_bot mc_backend"
+
+# 4. Mini App: сборка локально, подмена папки на сервере через mv (без даунтайма)
+cd miniapp && npm run build && cd dist && tar czf - . | ssh server-main \
+  "rm -rf /var/www/comment-max-miniapp.new && mkdir -p /var/www/comment-max-miniapp.new && \
+   tar xzf - -C /var/www/comment-max-miniapp.new && \
+   rm -rf /var/www/comment-max-miniapp.old && \
+   mv /var/www/comment-max-miniapp /var/www/comment-max-miniapp.old && \
+   mv /var/www/comment-max-miniapp.new /var/www/comment-max-miniapp && \
+   chown -R root:root /var/www/comment-max-miniapp && chmod -R a+rX /var/www/comment-max-miniapp"
 ```
 
-VPS root: `/opt/max-comments/`. Контейнеры: `mc_bot`, `mc_backend`, `mc_nginx`.
+Проверка после выката: `docker ps` — оба контейнера `healthy`; в логах `mc_bot` строки «Бот авторизован» и «Webhook зарегистрирован»; `curl https://comment-max.ru/health` и `/api/payments/config` → 200; в `https://comment-max.ru/` имя бандла совпадает со свежесобранным `dist/assets/index-*.js`.
 
-**Что пересобирать:**
-- `bot/` изменения → `mc_bot`
-- `backend/` изменения → `mc_backend`  
-- `miniapp/` изменения → `mc_nginx` (~3 мин, npm ci + Vite build внутри Docker)
-- Изменения в обоих → `mc_bot mc_backend` одной командой
+Откат: `docker tag infra-mc_bot:backup-<дата> infra-mc_bot:latest` + `up -d`, для фронта — вернуть `.bak-<дата>`.
+
+Mini App на 253 раздаётся из `/var/www/comment-max-miniapp` — обычная папка со статикой, не volume контейнера. Права на файлы после заливки с Windows приходится выставлять вручную (`chown`/`chmod` в команде выше), иначе nginx получает чужого владельца из tar.
+
+> **Устаревшее, не использовать:** `infra/deploy.sh` делает `git pull` на сервере (git-репозитория там нет) и печатает домен `sushi-house-39.online`; `infra/.env.example` тоже ссылается на `sushi-house-39.online` и порты 8080/8443. Оба файла остались от ранней схемы развёртывания — брать оттуда команды и значения нельзя, только имена переменных.
+
+SSH: алиас `server-main` (`72.56.77.253`) в `~/.ssh/config`. Пароли и токены в скрипты не хардкодить — брать из ENV/у владельца.
 
 **Применение SQL-миграций на VPS:**
 ```bash
@@ -176,7 +217,7 @@ bash infra/migrations/apply.sh
 - **Приватные каналы**: максимум 1000 участников
 - Mini App ОБЯЗАТЕЛЬНО загружает MAX Bridge из `https://st.max.ru/js/max-web-app.js` **первым** в `index.html` — до всех остальных скриптов (старый `static.max.ru/static/js/bridge.js` из ранней документации устарел; в `miniapp/index.html` уже актуальный URL)
 - MAX Bridge auth: HMAC-SHA256 валидация `initData` — проверять при каждом запросе в `backend/src/middleware/auth.ts`
-- **Нет Vercel** — Mini App на том же VPS, раздаётся nginx из `/var/www/miniapp` (собирается в Dockerfile.nginx)
+- **Нет Vercel** — Mini App на том же VPS, на 253 раздаётся хостовым nginx из `/var/www/comment-max-miniapp` (сборка `miniapp` заливается туда готовой; `infra/Dockerfile.nginx` со сборкой внутри Docker — от старой схемы с `mc_nginx`)
 - **rootDir: ".."** в `tsconfig.json` бота и backend — намеренно, чтобы TypeScript видел `../shared/` при компиляции. Из-за этого dist-путь: `dist/bot/src/index.js`, `dist/backend/src/index.js`
 - **`alert()`, `confirm()`, `prompt()` не работают в MAX Mini App** — падают молча без UI. Использовать: `useAppStore().requestConfirm({message, onConfirm, variant})` → рендерится через `<ConfirmDialog>` (`miniapp/src/components/ConfirmDialog.tsx`); уведомления → `useAppStore().addToast({type, message})` → `<ToastContainer>` (`miniapp/src/components/Toast.tsx`)
 - **MAX не шлёт повторный `bot_added`** при повторном добавлении бота в канал → ручная синхронизация через `POST /api/channels/sync`
@@ -185,6 +226,7 @@ bash infra/migrations/apply.sh
 - **`backend/src/jobs/autoRenew.ts`**: содержит устаревший ЮКасса-код — не активировать рекуррентные платежи без рефакторинга под T-Bank
 - **DB pool**: `max: 10` соединений, зашито в `bot/src/db/db.ts`
 - **BIGINT из PostgreSQL**: `id` и `max_user_id` возвращаются как строки — использовать `String()`, а не `Number()` для сравнений (у Number потеря точности при >2^53)
+- **Rate limit на backend** (`express-rate-limit`, `backend/src/index.ts`): общий лимит 200 запросов/мин на все `/api/*`, `/api/payments/*` — 10/мин, `/api/comments/*` — 30/мин
 
 ---
 
@@ -215,19 +257,28 @@ bash infra/migrations/apply.sh
 - `logger.ts` — JSON-логирование (ts, level, msg, extras)
 - `retry.ts` — экспоненциальный backoff для вызовов MAX API. Оборачивать вызовы MAX API через `withRetry()`
 
+### Bot scripts (`bot/src/scripts/`)
+
+- `broadcastNewsletter.ts` — переиспользуемый скрипт рассылки сообщения всей базе `users` через `sendMessageToUser`. Режимы `--dry-run` / `--to=<max_user_id>` (тест на одного) / `--send`. Троттлинг ~10 сообщений/сек (треть от лимита MAX 30 req/sec — с запасом под фоновые jobs). Запуск на VPS после сборки: `docker exec -it mc_bot node dist/bot/src/scripts/broadcastNewsletter.js --dry-run`.
+
 ### Backend routes (`backend/src/routes/`)
 
 ```
 GET  /api/user/me                     — пользователь + список каналов (requireAuth, upsert)
-GET  /api/user/feed                   — агрегатор последних комментариев (?channelId=X, последние 50)
+PATCH /api/user/notifications          — включить/отключить DM-уведомления об ответах (reply_notifications_enabled)
 GET  /api/channels/:id/analytics      — суточная статистика + топ постов (?days=7, макс 90)
 PATCH /api/channels/:id/settings      — banned_words, post_reactions, flags
+DELETE /api/channels/:id              — удалить канал из панели владельца (каскадно посты/комментарии/аналитику)
+POST /api/channels/:id/ban            — забанить пользователя (banned_max_id) от комментирования в канале
+DELETE /api/channels/:id/ban/:maxId   — разбанить пользователя
 POST /api/channels/sync               — обнаружить каналы бота через MAX API и зарегистрировать
 
 GET  /api/posts/:id                   — данные поста
 POST /api/posts/:id/view              — инкрементировать view_count
+POST /api/posts/:id/refresh           — fire-and-forget пинг боту (`/internal/update-post/:id`), мгновенно обновить кнопку поста
 
 GET  /api/comments?post_id=X          — комментарии с реакциями и liked_by_me
+GET  /api/comments/feed               — агрегатор последних комментариев владельца (?channel_id=X, последние 50)
 POST /api/comments                    — создать комментарий (parent_id + attachments: фото/стикеры)
 DELETE /api/comments/:id              — скрыть комментарий (автор или владелец канала)
 
@@ -322,6 +373,8 @@ GET  /health
 - **`miniapp/src/api/backend.ts`** — axios-клиент с interceptor: автоматически добавляет `X-Init-Data` из Bridge в каждый запрос. Все запросы к REST API идут только через него.
 - **`miniapp/src/store/useAppStore.ts`** — Zustand стор. `setPage()` автоматически сбрасывает `comments/loading/error/replyTo` при навигации. Дополнительные API: `addToast(toast)` / `removeToast(id)` — управление тостами; `requestConfirm(req)` / `resolveConfirm()` — показ модального диалога подтверждения.
 - **`miniapp/src/components/PollSettingsEditor.tsx`** — редактор шаблона опроса (вопрос + варианты), встроен в SettingsPage; изменения применяются к новым постам, не к уже опубликованным.
+- **`miniapp/src/components/PollWidget.tsx`** — показ опроса и результатов внутри Mini App (данные из `GET /api/polls/:postId/results`); голосование кнопками под постом обрабатывает бот, это только отображение.
+- **`miniapp/src/components/ErrorBoundary.tsx`** — верхнеуровневый перехват ошибок рендера; без него падение компонента даёт пустой белый экран внутри MAX без единого следа в UI.
 
 ### Code style
 
@@ -387,6 +440,15 @@ Prettier (`.prettierrc`): `singleQuote: true`, `semi: true`, `tabWidth: 2`, `tra
 
 `shared/types.ts` — единственный источник типов для всех сервисов: `User`, `Channel`, `ChannelSummary`, `Post`, `Comment`, `CommentAttachment`, `Payment`, `AnalyticsDaily`, `WebhookUpdate`, `MaxUser`, `MaxMessage`, `MaxAttachment`, `PollOption`, `PollResults`, `PollResponse`.
 
+`shared/acquisition.ts` — `parseAcquisition(startParam)`, общий для бота (`bot_started`) и backend (`X-Start-Param` при открытии Mini App). Разбирает `startapp` в пару `{source, detail}`: `ref_<код>` → referral, `utm_<source>_<campaign>` → utm, `post_<id>` → channel, `subscribe_*`/`notify` → notify, пусто → direct. Правило одно на оба сервиса — менять здесь, а не копией в вызывающем коде.
+
+### Прочее в `infra/`
+
+- `infra/static/legal/` — `offer.html` и `privacy.html`; на 253 отдаются хостовым nginx из `/opt/max-comments/infra/static`
+- `infra/cloudflare-worker/` — реверс-прокси `workers.dev` → VPS на случай блокировки домена РКН (обход апреля 2026, devlog `2026-04-11-rkn-bypass-comment-max-ru.md`). `ORIGIN` в `worker.js` указывает на старый домен `sushi-house-39.online` — перед использованием заменить на актуальный
+- `infra/renewal-hooks/beszel.sh` — мёртвый артефакт: certbot deploy-hook для `monitor.assaru.space` на выведенном из эксплуатации сервере, к 253 отношения не имеет
+- `bot/src/db/schema.sql` — копия схемы рядом с кодом бота; при изменении структуры править её вместе с `infra/init.sql` и новой миграцией
+
 ---
 
 ## Data Model (PostgreSQL)
@@ -417,55 +479,23 @@ Prettier (`.prettierrc`): `singleQuote: true`, `semi: true`, `tabWidth: 2`, `tra
 - `comments.attachments_json JSONB` — вложения комментария: `CommentAttachment` = `{type:'image', url, ...}` | `{type:'sticker', sticker_id, emoji}`; backend санитизирует (лимит на кол-во, MIME JPEG/PNG/WebP, размер) в `backend/src/routes/comments.ts`
 - `referral_rewards (referrer_id, referred_user_id, payment_id, reward_type, reward_days, commission_amount_rub, status)` — ledger реф-вознаграждений; `reward_type` = `first_pro_days` (разовый +30 дней, уникальный индекс на пару) или `commission` (% от платежа); пишется в T-Bank webhook при CONFIRMED
 - `referral_balance_adjustments (referrer_id, admin_user_id, amount_rub, reason)` — ручные корректировки баланса админом (может быть отрицательной)
+- `users.acquisition_detail` — сырая строка, для канального трафика хранится как `channel_<id>` (внутренний `channels.id`, не имя). В название канала резолвится JOIN'ом на лету в `GET /api/admin/users` и `GET /api/admin/acquisition` (`backend/src/routes/admin.ts`) — сам `acquisition_detail` не перезаписывается, при показе где-то ещё эту же CASE-конструкцию нужно повторить
 
-### Важно: неполная схема `infra/init.sql`
+### Важно: `infra/init.sql` покрывает схему не полностью
 
-`infra/init.sql` включает все основные таблицы. При развёртывании на новом сервере после `init.sql` применить:
+`init.sql` выполняется только при первом создании тома `mc_postgres_data` и включает большинство таблиц (включая `app_settings`, `promo_codes`, `reply_notifications`, `referral_rewards`, `comments.attachments_json`), но **не все**: там нет опросов (`post_polls`, `poll_votes`, `channels.poll_*`), нет `user_events` и полей атрибуции, нет `users.bot_dialog_started_at`.
 
-```sql
--- Снапшот emoji-реакций на момент создания поста
-ALTER TABLE posts ADD COLUMN IF NOT EXISTS post_reactions TEXT[] NOT NULL DEFAULT '{}';
+Поэтому при развёртывании на новом сервере после `init.sql` **всегда** прогонять миграции целиком — они идемпотентны (`IF NOT EXISTS`), лишнего не сделают:
 
--- Динамические настройки платформы
-CREATE TABLE IF NOT EXISTS app_settings (
-  key   TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-
--- Промо-коды
-CREATE TABLE IF NOT EXISTS promo_codes (
-  id               BIGSERIAL PRIMARY KEY,
-  code             TEXT UNIQUE NOT NULL,
-  discount_percent INT  NOT NULL CHECK (discount_percent BETWEEN 1 AND 100),
-  max_uses         INT,
-  used_count       INT  NOT NULL DEFAULT 0,
-  expires_at       TIMESTAMPTZ,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Столбец промо в payments (если ещё нет)
-ALTER TABLE payments ADD COLUMN IF NOT EXISTS promo_code       TEXT;
-ALTER TABLE payments ADD COLUMN IF NOT EXISTS discount_percent INT;
-
--- Метка активности на посте (обновляется при создании/удалении комментария)
-ALTER TABLE posts ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ;
-
--- Уведомления об ответах
-CREATE TABLE IF NOT EXISTS reply_notifications (
-  id                    BIGSERIAL PRIMARY KEY,
-  reply_comment_id      BIGINT NOT NULL REFERENCES comments(id) ON DELETE CASCADE,
-  recipient_max_user_id BIGINT NOT NULL,
-  sent_at               TIMESTAMPTZ,
-  created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_reply_notifications_unsent
-  ON reply_notifications (created_at) WHERE sent_at IS NULL;
-
--- Флаг уведомлений об ответах у пользователя
-ALTER TABLE users ADD COLUMN IF NOT EXISTS reply_notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+```bash
+cd infra && bash migrations/apply.sh
 ```
 
-Последующие миграции в `infra/migrations/` (применять через `apply.sh` или вручную):
+На проде 253 миграции применены — проверено 17.08.2026: `post_polls`, `poll_votes`, `user_events`, `users.bot_dialog_started_at` и `users.acquisition_source` на месте.
+
+Раньше здесь дублировался DDL этих таблиц. Его убрали: единственный источник правды по схеме — `infra/init.sql` плюс `infra/migrations/`, копия в доке протухала первой.
+
+Миграции в `infra/migrations/`:
 - `001_create_app_settings.sql`
 - `002_promo_codes_and_payments.sql`
 - `003_post_reactions_snapshot.sql`
@@ -485,7 +515,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS reply_notifications_enabled BOOLEAN N
 
 ## Environment Variables
 
-Все секреты в `infra/.env` (не коммитить). Шаблон: `infra/.env.example`.
+Все секреты в `infra/.env` (не коммитить). Шаблон: `infra/.env.example` — брать оттуда только имена переменных, значения в нём от старого домена `sushi-house-39.online`. На проде файл лежит в `/opt/max-comments/infra/.env`.
 
 | Переменная | Описание |
 |-----------|---------|
@@ -493,14 +523,14 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS reply_notifications_enabled BOOLEAN N
 | `WEBHOOK_URL` | HTTPS URL для webhook (`https://comment-max.ru/webhook`) |
 | `WEBHOOK_SECRET` | Секрет подписки MAX; проверяется по заголовку `X-Max-Bot-Api-Secret` |
 | `DATABASE_URL` | PostgreSQL connection string (локальный mc_postgres) |
-| `REDIS_URL` / `REDIS_PASSWORD` | Redis |
+| `REDIS_URL` / `REDIS_PASSWORD` | Задел: Redis не развёрнут, сервиса `mc_redis` в compose нет |
 | `MINI_APP_URL` | URL Mini App на VPS (https://comment-max.ru) |
-| `NGINX_HTTP_PORT` / `NGINX_HTTPS_PORT` | Порты nginx; на проде 80/443 (webhook MAX обязан быть на 443) |
+| `NGINX_HTTP_PORT` / `NGINX_HTTPS_PORT` | Только для схемы с контейнером `mc_nginx`; на 253 nginx хостовый и эти переменные не применяются |
 | `TBANK_TERMINAL_KEY` | T-Bank Acquiring TerminalKey |
 | `TBANK_PASSWORD` | T-Bank пароль для генерации подписи Token (SHA-256) |
 | `ADMIN_SECRET` | Секрет для заголовка `X-Admin-Secret` на bootstrap admin-роутах |
 
-На проде nginx слушает стандартные 80/443 (требование MAX webhook с 2026-05-25). `infra/setup-server.sh` и `infra/bootstrap.sh` больше не создают self-signed сертификаты.
+На проде nginx слушает стандартные 80/443 (требование MAX webhook с 2026-05-25) — на 253 это хостовый nginx, контейнеры наружу не смотрят. `infra/setup-server.sh` и `infra/bootstrap.sh` больше не создают self-signed сертификаты.
 
 ---
 
@@ -564,7 +594,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS reply_notifications_enabled BOOLEAN N
 - `implementer.md` — реализация по готовому плану из `specs/`
 - `reviewer.md` — код-ревью после реализации (только читает, не меняет)
 - `tester.md` — написание тестов (Vitest) после реализации
-- `save_ses.md` — сохранение контекста сессии
+
+Отдельно в `.claude/commands/save_ses.md` — команда сохранения контекста сессии в Claude-память (`~/.claude/projects/.../memory/`); канонический протокол handoff между Codex и Claude Code — `session-handoffs/current.md` (см. `AGENTS.md`).
 
 ### Ветки и коммиты
 

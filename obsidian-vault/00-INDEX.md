@@ -29,6 +29,15 @@
 | [[05-DevLog/2026-04-11-dynamic-pricing]] | Динамическая цена PRO, промо-коды, AdminPage |
 | [[05-DevLog/2026-04-12-deeplinks-presets-security]] | Deep links на комментарии, пресеты стоп-слов, security review |
 | [[05-DevLog/2026-04-12-audit-and-fixes]] | Архитектурный аудит (spec/), rate limiting, healthcheck, ErrorBoundary |
+| [[05-DevLog/2026-05-24-max-webhook-tls]] | MAX webhook TLS: отказ от self-signed |
+| [[05-DevLog/2026-07-19-max-api-domain-migration]] | Миграция MAX API на platform-api2.max.ru + аудит документации |
+| [[05-DevLog/2026-07-19-admin-lists-deploy]] | Полные списки в админке + синк nginx.conf + деплой |
+| [[05-DevLog/2026-07-19-git-history-secret-cleanup]] | Чистка git-истории от утёкших секретов |
+| [[05-DevLog/2026-07-19-signup-trial]] | Приветственный триал: 7 дней PRO всем новым пользователям |
+| [[05-DevLog/2026-07-22-acquisition-and-events-tracking]] | Атрибуция пользователей + клик-стрим событий в Mini App |
+| [[05-DevLog/2026-07-22-ux-audit-remediation]] | Устранение находок UX/a11y-аудита |
+| [[05-DevLog/2026-07-27-beszel-monitoring-hub]] | Beszel Hub для мониторинга VPS (monitor.assaru.space) |
+| [[05-DevLog/2026-08-17-claude-md-sync-with-prod-253]] | Сверка CLAUDE.md с продом на 72.56.77.253 |
 | [[06-Decisions/ADR-001-tech-stack]] | ADR-001: Выбор технологического стека |
 | [[06-Decisions/ADR-002-no-vercel]] | ADR-002: Отказ от Vercel — Mini App на VPS |
 | [[06-Decisions/ADR-003-bugs-and-lessons]] | ADR-003: Найденные баги, диагностика, правила |
