@@ -462,6 +462,7 @@ Prettier (`.prettierrc`): `singleQuote: true`, `semi: true`, `tabWidth: 2`, `tra
 - `comments.parent_id` — nullable FK на `comments.id` для тредов
 - `channels.owner_id → users.id`; `users.plan` = `free | pro`
 - `users.is_admin BOOLEAN` — суперадмин флаг; `users.reply_notifications_enabled BOOLEAN` — настройка DM-уведомлений
+- `users.signup_trial_granted_at TIMESTAMPTZ` — когда выдали приветственные 7 дней PRO; `NULL` = ещё не выдавали. Отдельная колонка, потому что состояние тарифа на этот вопрос не отвечает: истёкший PRO и «триала не было» выглядят по-разному, а раньше различались только через `plan_expires`
 - `users.bot_dialog_started_at TIMESTAMPTZ` — ставится в `bot/src/db/db.ts::upsertUser()` только при вызове с `botDialogStarted: true` (реальный `/start`, `onBotStarted.ts`); вызовы upsertUser из `onBotAdded.ts`/`onPostCreated.ts` (регистрация владельца канала) его не трогают. `NULL` = диалог с ботом не открыт → DM недоступен (MAX API вернёт `404 dialog.not.found`), доступен только Mini App. Не самокорректируется на будущий блок/удаление чата ботом — это последнее известное состояние, не гарантия текущей доставляемости
 - `comment_reactions` — реакции на комментарии; PK: `(comment_id, user_id, emoji)` — каждый emoji независим
 - `reply_notifications (reply_comment_id, recipient_max_user_id, sent_at)` — очередь DM-уведомлений об ответах; backend пишет, бот читает и помечает `sent_at`
@@ -508,6 +509,7 @@ cd infra && bash migrations/apply.sh
 - `010_referral_team_stats.sql` — гарантирует `ref_code` старым юзерам + индекс `idx_users_referred_by`
 - `011_analytics_events.sql` — атрибуция пользователя (`users.acquisition_source/detail/raw`, пишется один раз при первой вставке) + таблица `user_events` (клик-стрим Mini App)
 - `012_bot_dialog_tracking.sql` — `users.bot_dialog_started_at` (диалог с ботом открыт → доступен для DM-рассылки)
+- `013_signup_trial_flag.sql` — `users.signup_trial_granted_at` (приветственный триал уже выдавался; бэкфилла нет намеренно)
 
 Индексы: `comments.post_id`, `posts.channel_id`, `analytics_daily.(channel_id, date)`, `channels.owner_id`
 
@@ -538,7 +540,7 @@ cd infra && bash migrations/apply.sh
 
 - **FREE**: базовые комментарии, ограниченное число каналов
 - **PRO** (по умолчанию 299 ₽/мес, настраивается через `app_settings`): аналитика, неограниченные каналы, инструменты модерации
-- **Приветственный триал**: **7 дней PRO** при `/start` тому, у кого PRO не было никогда (`grantSignupTrial` в `bot/src/handlers/onBotStarted.ts`; отсечка в SQL — `plan='free' AND plan_expires IS NULL`, поэтому повторный `/start` ничего не перевыдаёт). Раньше условием было «пользователя нет в БД», из-за чего триал не доставался тем, кто сначала открыл Mini App по кнопке под постом и только потом запустил бота — а это типовой путь. Приглашённый по реферальной ссылке дополнительно получает **+7 дней** при установке реферальной связи (`linkReferral` там же)
+- **Приветственный триал**: **7 дней PRO** при `/start` (`grantSignupTrial` в `bot/src/handlers/onBotStarted.ts`). Два условия в SQL: `signup_trial_granted_at IS NULL` (триал этому человеку ещё не давали) и PRO сейчас не активен (подарок не должен укоротить действующий доступ до семи дней). Истёкший PRO выдаче не мешает. Историю правок стоит держать в голове: сначала условием было «пользователя нет в БД» — триал не доставался тем, кто сначала открыл Mini App по кнопке под постом и только потом запустил бота, а это типовой путь; затем «PRO не было никогда» (`plan_expires IS NULL`) — мимо проходили те, у кого доступ когда-то был и закончился. Приглашённый по реферальной ссылке дополнительно получает **+7 дней** при установке реферальной связи (`linkReferral` там же)
 - Платёжный провайдер: **T-Bank Acquiring** (подпись: SHA-256 от конкатенации отсортированных значений + Password)
 - Промо-коды: скидка в %, проверяются до создания платежа, `used_count` растёт только при CONFIRMED
 - **Реферальная программа** (доступна только при активном **купленном** PRO):

@@ -206,15 +206,20 @@ async function linkReferral(userId: number, refCode: string): Promise<void> {
 
 async function grantSignupTrial(userId: number): Promise<void> {
   try {
-    // plan_expires IS NULL = PRO у пользователя не было никогда: ни триала, ни оплаты.
-    // Истёкший триал оставляет дату в прошлом, поэтому второй раз не выдастся.
+    // Два независимых условия:
+    //   signup_trial_granted_at IS NULL — триал этому человеку ещё не давали;
+    //   PRO сейчас не активен — иначе подарок укоротил бы оплаченный или
+    //   подаренный доступ до семи дней.
+    // Истёкший PRO выдаче не мешает: человек, у которого доступ когда-то был и
+    // закончился, при первом запуске бота получает свои 7 дней.
     const { rowCount } = await pool.query(
       `UPDATE users
-          SET plan         = 'pro',
-              plan_expires = NOW() + INTERVAL '7 days'
+          SET plan                    = 'pro',
+              plan_expires            = NOW() + INTERVAL '7 days',
+              signup_trial_granted_at = NOW()
         WHERE id = $1
-          AND plan = 'free'
-          AND plan_expires IS NULL`,
+          AND signup_trial_granted_at IS NULL
+          AND NOT (plan = 'pro' AND (plan_expires IS NULL OR plan_expires > NOW()))`,
       [userId]
     );
     if (rowCount && rowCount > 0) {

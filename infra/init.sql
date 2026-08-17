@@ -16,6 +16,7 @@ CREATE TABLE users (
   ref_code                      VARCHAR(16) UNIQUE,                -- реферальный код пользователя
   referred_by                   BIGINT REFERENCES users(id),       -- кто пригласил
   reply_notifications_enabled   BOOLEAN NOT NULL DEFAULT true,     -- получать DM когда ответили на комментарий
+  signup_trial_granted_at       TIMESTAMPTZ,                       -- когда выдали приветственные 7 дней PRO (NULL = ещё не выдавали)
   created_at                    TIMESTAMPTZ DEFAULT NOW()
 );
 

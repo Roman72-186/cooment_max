@@ -172,7 +172,7 @@ describe('onBotStarted', () => {
     await onBotStarted(makeBotStartedUpdate(7, 'New') as any);
 
     expect(db.pool.query).toHaveBeenCalledWith(
-      expect.stringContaining("plan_expires = NOW() + INTERVAL '7 days'"),
+      expect.stringContaining("INTERVAL '7 days'"),
       [7]
     );
   });
@@ -184,21 +184,34 @@ describe('onBotStarted', () => {
     await onBotStarted(makeBotStartedUpdate(1, 'Old') as any);
 
     expect(db.pool.query).toHaveBeenCalledWith(
-      expect.stringContaining("plan_expires = NOW() + INTERVAL '7 days'"),
+      expect.stringContaining("INTERVAL '7 days'"),
       [1]
     );
   });
 
-  it('повторную выдачу отсекает SQL-условием, а не проверкой в коде', async () => {
+  it('повторную выдачу отсекает признак в БД, а не проверка в коде', async () => {
     vi.mocked(db.getUserByMaxId).mockResolvedValue({ id: 2, referred_by: null } as any);
     vi.mocked(db.upsertUser).mockResolvedValue({ id: 2, referred_by: null } as any);
 
     await onBotStarted(makeBotStartedUpdate(2, 'Old') as any);
 
-    // Запрос уходит всегда, но обновит строку только если PRO не было ни разу
+    // Запрос уходит всегда, но обновит строку только если триала ещё не было
     expect(db.pool.query).toHaveBeenCalledWith(
-      expect.stringContaining('plan_expires IS NULL'),
+      expect.stringContaining('signup_trial_granted_at IS NULL'),
       [2]
+    );
+  });
+
+  it('не укорачивает активный PRO до семи дней', async () => {
+    vi.mocked(db.getUserByMaxId).mockResolvedValue({ id: 3, referred_by: null } as any);
+    vi.mocked(db.upsertUser).mockResolvedValue({ id: 3, referred_by: null } as any);
+
+    await onBotStarted(makeBotStartedUpdate(3, 'Pro') as any);
+
+    // Условие пропускает истёкший PRO, но защищает действующий
+    expect(db.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining("NOT (plan = 'pro' AND (plan_expires IS NULL OR plan_expires > NOW()))"),
+      [3]
     );
   });
 });
