@@ -177,15 +177,28 @@ describe('onBotStarted', () => {
     );
   });
 
-  it('не выдаёт триал уже существующему пользователю', async () => {
+  it('выдаёт триал и тому, кто уже был в базе — пришёл из Mini App, а /start нажал позже', async () => {
     vi.mocked(db.getUserByMaxId).mockResolvedValue({ id: 1, referred_by: null } as any);
     vi.mocked(db.upsertUser).mockResolvedValue({ id: 1, referred_by: null } as any);
 
     await onBotStarted(makeBotStartedUpdate(1, 'Old') as any);
 
-    expect(db.pool.query).not.toHaveBeenCalledWith(
+    expect(db.pool.query).toHaveBeenCalledWith(
       expect.stringContaining("plan_expires = NOW() + INTERVAL '7 days'"),
-      expect.anything()
+      [1]
+    );
+  });
+
+  it('повторную выдачу отсекает SQL-условием, а не проверкой в коде', async () => {
+    vi.mocked(db.getUserByMaxId).mockResolvedValue({ id: 2, referred_by: null } as any);
+    vi.mocked(db.upsertUser).mockResolvedValue({ id: 2, referred_by: null } as any);
+
+    await onBotStarted(makeBotStartedUpdate(2, 'Old') as any);
+
+    // Запрос уходит всегда, но обновит строку только если PRO не было ни разу
+    expect(db.pool.query).toHaveBeenCalledWith(
+      expect.stringContaining('plan_expires IS NULL'),
+      [2]
     );
   });
 });

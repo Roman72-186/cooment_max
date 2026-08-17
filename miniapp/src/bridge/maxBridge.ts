@@ -59,6 +59,18 @@ export function expand(): void {
   window.WebApp?.expand?.();
 }
 
+// Открыть оферту или политику ПДн. Документы лежат на том же домене, что и Mini App,
+// поэтому ссылка строится от текущего origin: при переезде на другой домен она
+// переедет вместе с приложением (раньше здесь был захардкожен старый домен и ссылки умерли).
+export function openLegal(doc: 'offer' | 'privacy'): void {
+  const url = `${window.location.origin}/legal/${doc}`;
+  if (window.WebApp?.openLink) {
+    window.WebApp.openLink(url);
+    return;
+  }
+  window.open(url, '_blank', 'noopener');
+}
+
 export function showAlert(message: string): void {
   if (window.WebApp?.showAlert) {
     window.WebApp.showAlert(message);

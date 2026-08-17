@@ -42,9 +42,6 @@ export async function onBotStarted(update: WebhookUpdate): Promise<void> {
   logger.info('Бот запущен пользователем', { userId, startParam });
 
   try {
-    const existingUser = await db.getUserByMaxId(userId);
-    const isNewUser     = !existingUser;
-
     const acquisition = parseAcquisition(startParam);
     const user = await db.upsertUser({
       max_user_id: userId,
@@ -54,10 +51,12 @@ export async function onBotStarted(update: WebhookUpdate): Promise<void> {
       botDialogStarted: true,
     });
 
-    // Приветственный триал: первый /start от нового пользователя даёт 7 дней PRO
-    if (isNewUser) {
-      await grantSignupTrial(user.id);
-    }
+    // Приветственный триал: 7 дней PRO тому, кто ещё ни разу его не получал.
+    // Раньше условием было «пользователя нет в БД», но типовой путь — клик
+    // «Комментарии» под постом: человек попадает в users из Mini App, и к моменту
+    // /start уже не новый, поэтому триал пролетал мимо. Отсечка живёт в SQL
+    // (plan='free' AND plan_expires IS NULL) — повторный /start ничего не перевыдаст.
+    await grantSignupTrial(user.id);
 
     // Пользователь нажал «Включить уведомления об ответах» в Mini App
     if (isNotifySetup) {
@@ -103,6 +102,9 @@ export async function onBotStarted(update: WebhookUpdate): Promise<void> {
 
 function buildWelcomeText(name: string): string {
   const firstName = name.split(' ')[0];
+  // Оферта и политика лежат рядом с Mini App (nginx отдаёт /legal/*). Домен берём из
+  // MINI_APP_URL, чтобы при переезде ссылки уезжали вместе с приложением.
+  const legalBase = (config.miniAppUrl || 'https://comment-max.ru').replace(/\/+$/, '');
   return `👋 Привет, ${firstName}!
 
 📊 **Комментарии в ПОСТ** — панель управления каналом в MAX. Она помогает видеть вовлечённость аудитории, управлять комментариями и защищать канал от спама.
@@ -133,8 +135,8 @@ function buildWelcomeText(name: string): string {
 
 📄 **Документы:**
 
-• [Публичная оферта](https://sushi-house-39.online/legal/offer)
-• [Политика конфиденциальности](https://sushi-house-39.online/legal/privacy)
+• [Публичная оферта](${legalBase}/legal/offer)
+• [Политика конфиденциальности](${legalBase}/legal/privacy)
 
 ─────
 
@@ -204,15 +206,20 @@ async function linkReferral(userId: number, refCode: string): Promise<void> {
 
 async function grantSignupTrial(userId: number): Promise<void> {
   try {
-    await pool.query(
+    // plan_expires IS NULL = PRO у пользователя не было никогда: ни триала, ни оплаты.
+    // Истёкший триал оставляет дату в прошлом, поэтому второй раз не выдастся.
+    const { rowCount } = await pool.query(
       `UPDATE users
           SET plan         = 'pro',
               plan_expires = NOW() + INTERVAL '7 days'
         WHERE id = $1
-          AND plan = 'free'`,
+          AND plan = 'free'
+          AND plan_expires IS NULL`,
       [userId]
     );
-    logger.info('Выдан приветственный триал: 7 дней PRO', { userId });
+    if (rowCount && rowCount > 0) {
+      logger.info('Выдан приветственный триал: 7 дней PRO', { userId });
+    }
   } catch (err) {
     logger.warn('Не удалось выдать приветственный триал', { userId, err });
   }

@@ -38,6 +38,7 @@
 | [[05-DevLog/2026-07-22-ux-audit-remediation]] | Устранение находок UX/a11y-аудита |
 | [[05-DevLog/2026-07-27-beszel-monitoring-hub]] | Beszel Hub для мониторинга VPS (monitor.assaru.space) |
 | [[05-DevLog/2026-08-17-claude-md-sync-with-prod-253]] | Сверка CLAUDE.md с продом на 72.56.77.253 |
+| [[05-DevLog/2026-08-17-trial-and-legal-links-fix]] | Триал доставался не всем + мёртвые ссылки на оферту |
 | [[06-Decisions/ADR-001-tech-stack]] | ADR-001: Выбор технологического стека |
 | [[06-Decisions/ADR-002-no-vercel]] | ADR-002: Отказ от Vercel — Mini App на VPS |
 | [[06-Decisions/ADR-003-bugs-and-lessons]] | ADR-003: Найденные баги, диагностика, правила |

@@ -1,6 +1,7 @@
 // Онбординг — мастер подключения канала для владельца
 import { useState, useCallback } from 'react';
 import { getUserMe, syncChannels } from '../api/backend';
+import { openLegal } from '../bridge/maxBridge';
 import { useAppStore } from '../store/useAppStore';
 
 type Step = 'welcome' | 'instruction' | 'checking' | 'success';
@@ -75,11 +76,11 @@ export function OnboardingPage() {
               Подключить канал
             </button>
             <div className="onboarding__legal">
-              <button type="button" onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/offer')}>
+              <button type="button" onClick={() => openLegal('offer')}>
                 Оферта
               </button>
               {' · '}
-              <button type="button" onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/privacy')}>
+              <button type="button" onClick={() => openLegal('privacy')}>
                 Политика ПДн
               </button>
             </div>

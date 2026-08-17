@@ -1,6 +1,6 @@
 // Корневой компонент — маршрутизация по start_param и внутреннему состоянию
 import React, { useEffect } from 'react';
-import { getStartParam, notifyReady } from './bridge/maxBridge';
+import { getStartParam, notifyReady, openLegal } from './bridge/maxBridge';
 import { getUserMe, trackEvent } from './api/backend';
 import { useAppStore } from './store/useAppStore';
 import { CommentsPage } from './pages/CommentsPage';
@@ -162,11 +162,11 @@ export function App() {
       {content}
       {showFooter && (
         <footer className="onboarding__legal" style={{ padding: '12px 16px 20px', textAlign: 'center', marginTop: 0 }}>
-          <button type="button" onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/offer')}>
+          <button type="button" onClick={() => openLegal('offer')}>
             Оферта
           </button>
           {' · '}
-          <button type="button" onClick={() => (window as any).WebApp?.openLink('https://sushi-house-39.online/legal/privacy')}>
+          <button type="button" onClick={() => openLegal('privacy')}>
             Политика ПДн
           </button>
         </footer>
